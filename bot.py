@@ -146,7 +146,15 @@ class WeryfikacjaView(discord.ui.View):
 # ═══════════════════════════════════════════════════════
 # OKNO WERYFIKACJI (wpisujesz nick Roblox)
 # ═══════════════════════════════════════════════════════
-class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja Roblox"):
+import random
+import string
+
+def generuj_kod():
+    """Generuje losowy kod 8-znakowy, np: X7K9P2M1"""
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+
+
+class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja Roblox — Krok 1"):
     roblox_nick = discord.ui.TextInput(
         label="Twój nick Roblox",
         placeholder="Wpisz DOKŁADNY nick z Roblox",
@@ -171,7 +179,6 @@ class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja Roblox"):
                 data = await resp.json()
                 users = data.get("data", [])
                 
-                # Znajdź DOKŁADNY nick
                 user = None
                 for u in users:
                     if u["name"].lower() == nick.lower():
@@ -188,47 +195,144 @@ class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja Roblox"):
                 
                 roblox_id = user["id"]
                 roblox_username = user["name"]
-                
-                # Pobierz avatar
-                async with session.get(
-                    f"https://thumbnails.roblox.com/v1/users/avatar-headshot?"
-                    f"userIds={roblox_id}&size=420x420&format=Png"
-                ) as av_resp:
-                    av_data = await av_resp.json()
-                    avatar_url = av_data["data"][0]["imageUrl"] if av_data.get("data") else None
         
-        # Zapisz w bazie
+        # Generuj kod weryfikacyjny
+        kod = generuj_kod()
+        
+        # Zapisz kod w bazie (tymczasowo)
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO weryfikacje (discord_id, roblox_id, roblox_username) VALUES (?, ?, ?)",
-            (interaction.user.id, roblox_id, roblox_username)
+            "INSERT OR REPLACE INTO kody_weryfikacyjne (discord_id, kod, roblox_id, roblox_username) "
+            "VALUES (?, ?, ?, ?)",
+            (interaction.user.id, kod, roblox_id, roblox_username)
         )
         conn.commit()
         conn.close()
         
-        # Zmień nick na serwerze
-        try:
-            await interaction.user.edit(nick=roblox_username)
-        except:
-            pass  # Bot nie ma uprawnień
+        # Wyślij instrukcję z kodem
+        embed = discord.Embed(
+            title="🔐 Krok 1 — Weryfikacja",
+            description=f"**Znaleziono konto:** `{roblox_username}`\n\n"
+                        f"**Aby zweryfikować się, wykonaj te kroki:**\n\n"
+                        f"1️⃣ Wejdź na [roblox.com](https://www.roblox.com/users/{roblox_id}/profile)\n"
+                        f"2️⃣ Kliknij **⋮** (trzy kropki) → **'About'**\n"
+                        f"3️⃣ W polu **Description** wpisz dokładnie ten kod:\n\n"
+                        f"```\n{kod}\n```\n\n"
+                        f"4️⃣ Kliknij **Save**\n\n"
+                        f"⏳ Masz **10 minut** na wpisanie kodu.\n"
+                        f"Potem kliknij przycisk **'Sprawdź kod'** poniżej.",
+            color=0xFFA500
+        )
         
-        # Dodaj rolę zweryfikowanego
+        view = SprawdzKodView(kod, roblox_id, roblox_username)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+class SprawdzKodView(discord.ui.View):
+    def __init__(self, kod, roblox_id, roblox_username):
+        super().__init__(timeout=600)  # 10 minut na weryfikację
+        self.kod = kod
+        self.roblox_id = roblox_id
+        self.roblox_username = roblox_username
+    
+    @discord.ui.button(label="✅ Sprawdź kod", style=discord.ButtonStyle.blurple)
+    async def sprawdz_kod(self, interaction: discord.Interaction, button: discord.ui.Button):
+        
+        # Sprawdź czy kod wciąż istnieje w bazie
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT kod FROM kody_weryfikacyjne WHERE discord_id = ?",
+            (interaction.user.id,)
+        )
+        wynik = cursor.fetchone()
+        
+        if not wynik:
+            await interaction.response.send_message(
+                "❌ Kod wygasł lub już się zweryfikowałeś!", ephemeral=True
+            )
+            conn.close()
+            return
+        
+        zapisany_kod = wynik[0]
+        
+        # Pobierz opis profilu Roblox
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://users.roblox.com/v1/users/{self.roblox_id}"
+            ) as resp:
+                if resp.status != 200:
+                    await interaction.response.send_message(
+                        "❌ Błąd pobierania profilu Roblox!", ephemeral=True
+                    )
+                    conn.close()
+                    return
+                
+                user_data = await resp.json()
+                opis = user_data.get("description", "") or ""
+        
+        # Sprawdź czy kod jest w opisie
+        if zapisany_kod not in opis:
+            await interaction.response.send_message(
+                f"❌ Kod **nie znaleziony** w opisie profilu!\n\n"
+                f"Upewnij się, że wpisałeś dokładnie:\n"
+                f"```\n{zapisany_kod}\n```\n"
+                f"W polu **Description** na Roblox i kliknąłeś **Save**.",
+                ephemeral=True
+            )
+            conn.close()
+            return
+        
+        # ✅ KOD ZNALEZIONY — WERYFIKACJA UDANA
+        
+        # Usuń kod z bazy
+        cursor.execute("DELETE FROM kody_weryfikacyjne WHERE discord_id = ?", (interaction.user.id,))
+        
+        # Zapisz weryfikację
+        cursor.execute(
+            "INSERT INTO weryfikacje (discord_id, roblox_id, roblox_username) VALUES (?, ?, ?)",
+            (interaction.user.id, self.roblox_id, self.roblox_username)
+        )
+        conn.commit()
+        conn.close()
+        
+        # Zmień nick
+        try:
+            await interaction.user.edit(nick=self.roblox_username)
+        except:
+            pass
+        
+        # Dodaj rolę
         guild = interaction.guild
         rola = guild.get_role(ROLA_WERYFIKOWANY)
         if rola:
             await interaction.user.add_roles(rola)
         
+        # Pobierz avatar
+        avatar_url = None
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"https://thumbnails.roblox.com/v1/users/avatar-headshot?"
+                f"userIds={self.roblox_id}&size=420x420&format=Png"
+            ) as av_resp:
+                av_data = await av_resp.json()
+                if av_data.get("data"):
+                    avatar_url = av_data["data"][0]["imageUrl"]
+        
         # Potwierdzenie
         embed = discord.Embed(
             title="✅ Weryfikacja udana!",
-            description=f"**Nick:** {roblox_username}\n**ID:** {roblox_id}",
+            description=f"**Nick:** {self.roblox_username}\n**ID:** {self.roblox_id}",
             color=0x00FF00
         )
         if avatar_url:
             embed.set_thumbnail(url=avatar_url)
         
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        # Wyłącz przycisk
+        for child in self.children:
+            child.disabled = True
+        await interaction.response.edit_message(embed=embed, view=self)
 
 # ═══════════════════════════════════════════════════════
 # KOMENDA: /panel-weryfikacji (tylko dla adminów)
