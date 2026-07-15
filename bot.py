@@ -5,6 +5,8 @@ from datetime import datetime
 import aiohttp
 import asyncio
 import os
+import random
+import string
 
 from config import (
     BOT_TOKEN, GUILD_ID,
@@ -47,20 +49,27 @@ async def pobierz_dane_roblox(discord_id: int):
     return wynik  # (roblox_id, roblox_username) lub None
 
 # ═══════════════════════════════════════════════════════
+# FUNKCJA: Generuj losowy kod weryfikacyjny
+# ═══════════════════════════════════════════════════════
+def generuj_kod():
+    """Generuje losowy kod 8-znakowy, np: X7K9P2M1"""
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+
+# ═══════════════════════════════════════════════════════
 # START BOTA
 # ═══════════════════════════════════════════════════════
 @bot.event
 async def on_ready():
     print(f"✅ Bot zalogowany jako: {bot.user}")
     print(f"🌐 Serwerów: {len(bot.guilds)}")
-    
+
     # Synchronizacja komend slash
     try:
         synced = await bot.tree.sync()
         print(f"🔄 Synchronizowano {len(synced)} komend")
     except Exception as e:
         print(f"❌ Błąd sync: {e}")
-    
+
     # Odtwórz panele po restarcie
     await odtworz_panel_weryfikacji()
 
@@ -68,33 +77,39 @@ async def on_ready():
 # ODTWARZANIE PANELU PO RESTARCIE
 # ═══════════════════════════════════════════════════════
 async def odtworz_panel_weryfikacji():
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT channel_id, message_id FROM panele WHERE typ = 'weryfikacja'")
-    panele = cursor.fetchall()
-    conn.close()
-    
-    for panel in panele:
-        channel_id, message_id = panel
-        guild = bot.get_guild(GUILD_ID)
-        if not guild:
-            continue
-            
-        channel = guild.get_channel(channel_id)
-        if not channel:
-            continue
-            
-        try:
-            msg = await channel.fetch_message(message_id)
-            print(f"✅ Panel odzyskany: {msg.id}")
-        except discord.NotFound:
-            print("⚠️ Panel usunięty, wysyłam nowy...")
-            await wyslij_panel_weryfikacji(channel)
+    """Po restarcie: usuń stare panele, wyślij nowy"""
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        print("❌ Nie znaleziono serwera!")
+        return
+
+    channel = guild.get_channel(KANAL_WERYFIKACJI)
+    if not channel:
+        print("❌ Kanał weryfikacji nie skonfigurowany!")
+        return
+
+    # Usuń stare wiadomości bota z kanału weryfikacji
+    usuniete = 0
+    async for msg in channel.history(limit=100):
+        if msg.author.id == bot.user.id:  # Tylko wiadomości bota
+            try:
+                await msg.delete()
+                usuniete += 1
+            except:
+                pass
+
+    if usuniete > 0:
+        print(f"🗑️ Usunięto {usuniete} starych paneli")
+
+    # Wyślij nowy panel
+    await wyslij_panel_weryfikacji(channel)
+    print("✅ Nowy panel weryfikacji wysłany!")
 
 # ═══════════════════════════════════════════════════════
 # WYŚLIJ PANEL WERYFIKACJI
 # ═══════════════════════════════════════════════════════
 async def wyslij_panel_weryfikacji(channel):
+    """Wysyła nowy panel weryfikacji — bez zapisywania w bazie"""
     embed = discord.Embed(
         title="🔐 Weryfikacja Roblox",
         description="Kliknij przycisk poniżej, aby zweryfikować konto Roblox.\n\n"
@@ -104,20 +119,9 @@ async def wyslij_panel_weryfikacji(channel):
         color=0x00D4AA
     )
     embed.set_thumbnail(url="https://www.roblox.com/favicon.ico")
-    
+
     view = WeryfikacjaView()
     msg = await channel.send(embed=embed, view=view)
-    
-    # Zapisz do bazy
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT OR REPLACE INTO panele (typ, channel_id, message_id) VALUES (?, ?, ?)",
-        ("weryfikacja", channel.id, msg.id)
-    )
-    conn.commit()
-    conn.close()
-    
     return msg
 
 # ═══════════════════════════════════════════════════════
@@ -126,10 +130,10 @@ async def wyslij_panel_weryfikacji(channel):
 class WeryfikacjaView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)  # Brak timeoutu — działa zawsze
-    
+
     @discord.ui.button(label="Zweryfikuj się", style=discord.ButtonStyle.green, emoji="✅")
     async def verify(self, interaction: discord.Interaction, button: discord.ui.Button):
-        
+
         # Sprawdź czy już zweryfikowany
         conn = get_db()
         cursor = conn.cursor()
@@ -139,21 +143,13 @@ class WeryfikacjaView(discord.ui.View):
             await interaction.response.send_message("✅ Już jesteś zweryfikowany!", ephemeral=True)
             return
         conn.close()
-        
+
         # Otwórz okno do wpisania nicku
         await interaction.response.send_modal(WeryfikacjaModal())
 
 # ═══════════════════════════════════════════════════════
-# OKNO WERYFIKACJI (wpisujesz nick Roblox)
+# OKNO WERYFIKACJI KROK 1 — wpisujesz nick Roblox
 # ═══════════════════════════════════════════════════════
-import random
-import string
-
-def generuj_kod():
-    """Generuje losowy kod 8-znakowy, np: X7K9P2M1"""
-    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-
-
 class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja Roblox — Krok 1"):
     roblox_nick = discord.ui.TextInput(
         label="Twój nick Roblox",
@@ -161,10 +157,10 @@ class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja Roblox — Krok 1"):
         required=True,
         max_length=50
     )
-    
+
     async def on_submit(self, interaction: discord.Interaction):
         nick = self.roblox_nick.value
-        
+
         # Szukaj użytkownika w Roblox API
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -175,16 +171,16 @@ class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja Roblox — Krok 1"):
                         "❌ Błąd połączenia z Roblox!", ephemeral=True
                     )
                     return
-                
+
                 data = await resp.json()
                 users = data.get("data", [])
-                
+
                 user = None
                 for u in users:
                     if u["name"].lower() == nick.lower():
                         user = u
                         break
-                
+
                 if not user:
                     await interaction.response.send_message(
                         f"❌ Nie znaleziono `{nick}` na Roblox!\n"
@@ -192,13 +188,13 @@ class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja Roblox — Krok 1"):
                         ephemeral=True
                     )
                     return
-                
+
                 roblox_id = user["id"]
                 roblox_username = user["name"]
-        
+
         # Generuj kod weryfikacyjny
         kod = generuj_kod()
-        
+
         # Zapisz kod w bazie (tymczasowo)
         conn = get_db()
         cursor = conn.cursor()
@@ -209,7 +205,7 @@ class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja Roblox — Krok 1"):
         )
         conn.commit()
         conn.close()
-        
+
         # Wyślij instrukcję z kodem
         embed = discord.Embed(
             title="🔐 Krok 1 — Weryfikacja",
@@ -224,21 +220,23 @@ class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja Roblox — Krok 1"):
                         f"Potem kliknij przycisk **'Sprawdź kod'** poniżej.",
             color=0xFFA500
         )
-        
+
         view = SprawdzKodView(kod, roblox_id, roblox_username)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-
+# ═══════════════════════════════════════════════════════
+# PRZYCISK SPRAWDŹ KOD — Krok 2
+# ═══════════════════════════════════════════════════════
 class SprawdzKodView(discord.ui.View):
     def __init__(self, kod, roblox_id, roblox_username):
         super().__init__(timeout=600)  # 10 minut na weryfikację
         self.kod = kod
         self.roblox_id = roblox_id
         self.roblox_username = roblox_username
-    
+
     @discord.ui.button(label="✅ Sprawdź kod", style=discord.ButtonStyle.blurple)
     async def sprawdz_kod(self, interaction: discord.Interaction, button: discord.ui.Button):
-        
+
         # Sprawdź czy kod wciąż istnieje w bazie
         conn = get_db()
         cursor = conn.cursor()
@@ -247,16 +245,16 @@ class SprawdzKodView(discord.ui.View):
             (interaction.user.id,)
         )
         wynik = cursor.fetchone()
-        
+
         if not wynik:
             await interaction.response.send_message(
                 "❌ Kod wygasł lub już się zweryfikowałeś!", ephemeral=True
             )
             conn.close()
             return
-        
+
         zapisany_kod = wynik[0]
-        
+
         # Pobierz opis profilu Roblox
         async with aiohttp.ClientSession() as session:
             async with session.get(
@@ -268,10 +266,10 @@ class SprawdzKodView(discord.ui.View):
                     )
                     conn.close()
                     return
-                
+
                 user_data = await resp.json()
                 opis = user_data.get("description", "") or ""
-        
+
         # Sprawdź czy kod jest w opisie
         if zapisany_kod not in opis:
             await interaction.response.send_message(
@@ -283,12 +281,12 @@ class SprawdzKodView(discord.ui.View):
             )
             conn.close()
             return
-        
+
         # ✅ KOD ZNALEZIONY — WERYFIKACJA UDANA
-        
+
         # Usuń kod z bazy
         cursor.execute("DELETE FROM kody_weryfikacyjne WHERE discord_id = ?", (interaction.user.id,))
-        
+
         # Zapisz weryfikację
         cursor.execute(
             "INSERT INTO weryfikacje (discord_id, roblox_id, roblox_username) VALUES (?, ?, ?)",
@@ -296,19 +294,19 @@ class SprawdzKodView(discord.ui.View):
         )
         conn.commit()
         conn.close()
-        
+
         # Zmień nick
         try:
             await interaction.user.edit(nick=self.roblox_username)
         except:
             pass
-        
+
         # Dodaj rolę
         guild = interaction.guild
         rola = guild.get_role(ROLA_WERYFIKOWANY)
         if rola:
             await interaction.user.add_roles(rola)
-        
+
         # Pobierz avatar
         avatar_url = None
         async with aiohttp.ClientSession() as session:
@@ -319,7 +317,7 @@ class SprawdzKodView(discord.ui.View):
                 av_data = await av_resp.json()
                 if av_data.get("data"):
                     avatar_url = av_data["data"][0]["imageUrl"]
-        
+
         # Potwierdzenie
         embed = discord.Embed(
             title="✅ Weryfikacja udana!",
@@ -328,7 +326,7 @@ class SprawdzKodView(discord.ui.View):
         )
         if avatar_url:
             embed.set_thumbnail(url=avatar_url)
-        
+
         # Wyłącz przycisk
         for child in self.children:
             child.disabled = True
@@ -344,7 +342,7 @@ async def panel_weryfikacji(interaction: discord.Interaction):
     if not channel:
         await interaction.response.send_message("❌ Kanał nie skonfigurowany!", ephemeral=True)
         return
-    
+
     await wyslij_panel_weryfikacji(channel)
     await interaction.response.send_message("✅ Panel wysłany!", ephemeral=True)
 
@@ -367,23 +365,20 @@ async def dowod(interaction: discord.Interaction,
                 imie_nazwisko: str,
                 data_urodzenia: str,
                 obywatelstwo: str):
-    
-    # Sprawdź rolę
+
     if not ma_role(interaction.user, ROLA_DOWOD):
         await interaction.response.send_message("❌ Nie masz uprawnień!", ephemeral=True)
         return
-    
-    # Sprawdź czy zweryfikowany
+
     dane = await pobierz_dane_roblox(interaction.user.id)
     if not dane:
         await interaction.response.send_message(
             "❌ Najpierw zweryfikuj się przez Roblox!", ephemeral=True
         )
         return
-    
+
     roblox_id, roblox_username = dane
-    
-    # Sprawdź czy już ma ten dowód
+
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
@@ -396,8 +391,7 @@ async def dowod(interaction: discord.Interaction,
             f"❌ Masz już dowód dla Postaci {numer_postaci.value}!", ephemeral=True
         )
         return
-    
-    # Pobierz avatar
+
     avatar_url = None
     async with aiohttp.ClientSession() as session:
         async with session.get(
@@ -407,8 +401,7 @@ async def dowod(interaction: discord.Interaction,
             data = await resp.json()
             if data.get("data"):
                 avatar_url = data["data"][0]["imageUrl"]
-    
-    # Zapisz do bazy
+
     cursor.execute(
         """INSERT INTO dowody 
            (discord_id, numer_postaci, imie_nazwisko, data_urodzenia, 
@@ -419,8 +412,7 @@ async def dowod(interaction: discord.Interaction,
     )
     conn.commit()
     conn.close()
-    
-    # Wyślij na kanał dowodów
+
     channel = bot.get_channel(KANAL_DOWODY)
     if channel:
         embed = discord.Embed(
@@ -435,9 +427,9 @@ async def dowod(interaction: discord.Interaction,
         embed.add_field(name="Numer postaci:", value=str(numer_postaci.value), inline=False)
         embed.set_thumbnail(url=avatar_url or interaction.user.display_avatar.url)
         embed.set_footer(text=f"Wydano: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
-        
+
         await channel.send(embed=embed)
-    
+
     await interaction.response.send_message(
         f"✅ Dowód dla Postaci {numer_postaci.value} wydany!", ephemeral=True
     )
@@ -457,21 +449,20 @@ async def wystaw_wyrok(interaction: discord.Interaction,
                        kara_wiezienia: str,
                        kwota: str,
                        zarzuty: str):
-    
+
     if not ma_role(interaction.user, ROLA_POLICJA):
         await interaction.response.send_message("❌ Brak uprawnień!", ephemeral=True)
         return
-    
+
     dane = await pobierz_dane_roblox(osoba.id)
     if not dane:
         await interaction.response.send_message("❌ Osoba niezweryfikowana!", ephemeral=True)
         return
-    
+
     roblox_id, roblox_username = dane
     funkcjonariusz = interaction.user.display_name
     data = datetime.now().strftime("%d.%m.%Y %H:%M")
-    
-    # Zapisz
+
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
@@ -483,8 +474,7 @@ async def wystaw_wyrok(interaction: discord.Interaction,
     )
     conn.commit()
     conn.close()
-    
-    # Wyślij
+
     channel = bot.get_channel(KANAL_WYROKI)
     if channel:
         embed = discord.Embed(title="⚖️ Wyrok Sądowy", color=0xE74C3C)
@@ -497,9 +487,9 @@ async def wystaw_wyrok(interaction: discord.Interaction,
         embed.add_field(name="Zarzuty:", value=zarzuty, inline=False)
         embed.add_field(name="Data:", value=data, inline=False)
         embed.add_field(name="Funkcjonariusz:", value=interaction.user.mention, inline=False)
-        
+
         await channel.send(embed=embed)
-    
+
     await interaction.response.send_message("✅ Wyrok wystawiony!", ephemeral=True)
 
 # ═══════════════════════════════════════════════════════
@@ -515,20 +505,20 @@ async def wystaw_mandat(interaction: discord.Interaction,
                         osoba: discord.Member,
                         kwota: str,
                         zarzuty: str):
-    
+
     if not ma_role(interaction.user, ROLA_POLICJA):
         await interaction.response.send_message("❌ Brak uprawnień!", ephemeral=True)
         return
-    
+
     dane = await pobierz_dane_roblox(osoba.id)
     if not dane:
         await interaction.response.send_message("❌ Osoba niezweryfikowana!", ephemeral=True)
         return
-    
+
     roblox_id, roblox_username = dane
     funkcjonariusz = interaction.user.display_name
     data = datetime.now().strftime("%d.%m.%Y %H:%M")
-    
+
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute(
@@ -538,7 +528,7 @@ async def wystaw_mandat(interaction: discord.Interaction,
     )
     conn.commit()
     conn.close()
-    
+
     channel = bot.get_channel(KANAL_MANDATY)
     if channel:
         embed = discord.Embed(title="📋 Mandat Karny", color=0xF39C12)
@@ -550,9 +540,9 @@ async def wystaw_mandat(interaction: discord.Interaction,
         embed.add_field(name="Zarzuty:", value=zarzuty, inline=False)
         embed.add_field(name="Data:", value=data, inline=False)
         embed.add_field(name="Funkcjonariusz:", value=interaction.user.mention, inline=False)
-        
+
         await channel.send(embed=embed)
-    
+
     await interaction.response.send_message("✅ Mandat wystawiony!", ephemeral=True)
 
 # ═══════════════════════════════════════════════════════
@@ -570,11 +560,11 @@ async def wystaw_fakture(interaction: discord.Interaction,
                          za_co: str,
                          dzien: str,
                          kwota: str):
-    
+
     if not ma_role(interaction.user, ROLA_FAKTURY):
         await interaction.response.send_message("❌ Brak uprawnień!", ephemeral=True)
         return
-    
+
     channel = bot.get_channel(KANAL_FAKTURY)
     if channel:
         embed = discord.Embed(title="📄 Faktura", color=0x9B59B6)
@@ -584,9 +574,9 @@ async def wystaw_fakture(interaction: discord.Interaction,
         embed.add_field(name="Jakiego dnia:", value=dzien, inline=False)
         embed.add_field(name="Kwota:", value=kwota, inline=False)
         embed.add_field(name="Podpis:", value=interaction.user.mention, inline=False)
-        
+
         await channel.send(embed=embed)
-    
+
     await interaction.response.send_message("✅ Faktura wystawiona!", ephemeral=True)
 
 # ═══════════════════════════════════════════════════════
@@ -608,11 +598,11 @@ async def wystaw_list_gonczy(interaction: discord.Interaction,
                               na_kogo: str,
                               powod: str,
                               priorytet: app_commands.Choice[str]):
-    
+
     if not ma_role(interaction.user, ROLA_LISTY_GONCZE):
         await interaction.response.send_message("❌ Brak uprawnień!", ephemeral=True)
         return
-    
+
     channel = bot.get_channel(KANAL_LISTY_GONCZE)
     if channel:
         color = 0xFF0000 if priorytet.value == "Tak" else 0xE67E22
@@ -621,9 +611,9 @@ async def wystaw_list_gonczy(interaction: discord.Interaction,
         embed.add_field(name="Na kogo:", value=na_kogo, inline=False)
         embed.add_field(name="Powód:", value=powod, inline=False)
         embed.add_field(name="Priorytet:", value=priorytet.value, inline=False)
-        
+
         await channel.send(embed=embed)
-    
+
     await interaction.response.send_message("✅ List gończy wystawiony!", ephemeral=True)
 
 # ═══════════════════════════════════════════════════════
@@ -639,12 +629,11 @@ async def rejestruj_pojazd(interaction: discord.Interaction,
                             nr_rejestracyjny: str,
                             marka_model: str,
                             wlasciciel: discord.Member):
-    
+
     if not ma_role(interaction.user, ROLA_REJESTRACJA):
         await interaction.response.send_message("❌ Brak uprawnień!", ephemeral=True)
         return
-    
-    # Sprawdź czy numer już istnieje
+
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM rejestracje WHERE nr_rejestracyjny = ?", (nr_rejestracyjny,))
@@ -654,7 +643,7 @@ async def rejestruj_pojazd(interaction: discord.Interaction,
             "❌ Ten numer już istnieje!", ephemeral=True
         )
         return
-    
+
     cursor.execute(
         "INSERT INTO rejestracje (nr_rejestracyjny, marka_model, wlasciciel_id, wlasciciel_nick) "
         "VALUES (?, ?, ?, ?)",
@@ -662,7 +651,7 @@ async def rejestruj_pojazd(interaction: discord.Interaction,
     )
     conn.commit()
     conn.close()
-    
+
     channel = bot.get_channel(KANAL_REJESTRACJA)
     if channel:
         embed = discord.Embed(title="🚗 Rejestracja Pojazdu", color=0x2ECC71)
@@ -670,9 +659,9 @@ async def rejestruj_pojazd(interaction: discord.Interaction,
         embed.add_field(name="Marka / Model:", value=marka_model, inline=False)
         embed.add_field(name="Właściciel:", value=wlasciciel.mention, inline=False)
         embed.add_field(name="Podpis:", value="Urząd Miasta Warszawy", inline=False)
-        
+
         await channel.send(embed=embed)
-    
+
     await interaction.response.send_message("✅ Pojazd zarejestrowany!", ephemeral=True)
 
 # ═══════════════════════════════════════════════════════
@@ -682,44 +671,38 @@ async def rejestruj_pojazd(interaction: discord.Interaction,
 @app_commands.describe(osoba="Osoba do zresetowania")
 @commands.has_permissions(administrator=True)
 async def reset_weryfikacji(interaction: discord.Interaction, osoba: discord.Member):
-    
+
     conn = get_db()
     cursor = conn.cursor()
-    
-    # Sprawdź czy osoba jest w ogóle zweryfikowana
+
     cursor.execute("SELECT roblox_username FROM weryfikacje WHERE discord_id = ?", (osoba.id,))
     wynik = cursor.fetchone()
-    
+
     if not wynik:
         conn.close()
         await interaction.response.send_message(
             f"❌ {osoba.mention} nie jest zweryfikowany!", ephemeral=True
         )
         return
-    
+
     roblox_username = wynik[0]
-    
-    # Usuń weryfikację
+
     cursor.execute("DELETE FROM weryfikacje WHERE discord_id = ?", (osoba.id,))
-    
-    # Usuń też ewentualne kody weryfikacyjne
     cursor.execute("DELETE FROM kody_weryfikacyjne WHERE discord_id = ?", (osoba.id,))
-    
+
     conn.commit()
     conn.close()
-    
-    # Zabierz rolę zweryfikowanego
+
     guild = interaction.guild
     rola = guild.get_role(ROLA_WERYFIKOWANY)
     if rola and rola in osoba.roles:
         await osoba.remove_roles(rola)
-    
-    # Przywróć oryginalny nick (opcjonalnie — usuwa zmianę nicku)
+
     try:
         await osoba.edit(nick=None)
     except:
         pass
-    
+
     await interaction.response.send_message(
         f"✅ Weryfikacja {osoba.mention} (`{roblox_username}`) została zresetowana!\n"
         f"Użytkownik musi zweryfikować się ponownie.",
