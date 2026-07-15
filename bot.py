@@ -676,6 +676,57 @@ async def rejestruj_pojazd(interaction: discord.Interaction,
     await interaction.response.send_message("✅ Pojazd zarejestrowany!", ephemeral=True)
 
 # ═══════════════════════════════════════════════════════
+# KOMENDA: /reset-weryfikacji — usuwa weryfikację (dla adminów)
+# ═══════════════════════════════════════════════════════
+@bot.tree.command(name="reset-weryfikacji", description="Zresetuj weryfikację użytkownika")
+@app_commands.describe(osoba="Osoba do zresetowania")
+@commands.has_permissions(administrator=True)
+async def reset_weryfikacji(interaction: discord.Interaction, osoba: discord.Member):
+    
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    # Sprawdź czy osoba jest w ogóle zweryfikowana
+    cursor.execute("SELECT roblox_username FROM weryfikacje WHERE discord_id = ?", (osoba.id,))
+    wynik = cursor.fetchone()
+    
+    if not wynik:
+        conn.close()
+        await interaction.response.send_message(
+            f"❌ {osoba.mention} nie jest zweryfikowany!", ephemeral=True
+        )
+        return
+    
+    roblox_username = wynik[0]
+    
+    # Usuń weryfikację
+    cursor.execute("DELETE FROM weryfikacje WHERE discord_id = ?", (osoba.id,))
+    
+    # Usuń też ewentualne kody weryfikacyjne
+    cursor.execute("DELETE FROM kody_weryfikacyjne WHERE discord_id = ?", (osoba.id,))
+    
+    conn.commit()
+    conn.close()
+    
+    # Zabierz rolę zweryfikowanego
+    guild = interaction.guild
+    rola = guild.get_role(ROLA_WERYFIKOWANY)
+    if rola and rola in osoba.roles:
+        await osoba.remove_roles(rola)
+    
+    # Przywróć oryginalny nick (opcjonalnie — usuwa zmianę nicku)
+    try:
+        await osoba.edit(nick=None)
+    except:
+        pass
+    
+    await interaction.response.send_message(
+        f"✅ Weryfikacja {osoba.mention} (`{roblox_username}`) została zresetowana!\n"
+        f"Użytkownik musi zweryfikować się ponownie.",
+        ephemeral=True
+    )
+
+# ═══════════════════════════════════════════════════════
 # URUCHOMIENIE BOTA
 # ═══════════════════════════════════════════════════════
 if __name__ == "__main__":
