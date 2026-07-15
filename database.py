@@ -120,6 +120,17 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+        # ═══ TABELA: KODY WERYFIKACYJNE (tymczasowe) ═══
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS kody_weryfikacyjne (
+            discord_id INTEGER PRIMARY KEY,
+            kod TEXT,
+            roblox_id INTEGER,
+            roblox_username TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
     
     conn.commit()
     conn.close()
