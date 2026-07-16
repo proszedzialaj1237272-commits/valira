@@ -94,12 +94,15 @@ class PodanieReviewView(discord.ui.View):
         await self._przetworz(interaction, "odrzucone", "nie zdal", False)
 
     async def _przetworz(self, interaction, status, wynik, nadaj_role):
+        # ODPOWIEDZ OD RAZU zeby nie bylo timeout
+        await interaction.response.defer()
+        
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT status FROM podania_status WHERE id = ?", (self.podanie_status_id,))
         row = cursor.fetchone()
         if row and row[0] != 'oczekujace':
-            await interaction.response.send_message("To podanie zostalo juz rozpatrzone!", ephemeral=True)
+            await interaction.followup.send("To podanie zostalo juz rozpatrzone!", ephemeral=True)
             conn.close()
             return
 
@@ -157,7 +160,9 @@ class PodanieReviewView(discord.ui.View):
             inline=False
         )
         
-        await interaction.response.edit_message(embed=embed, view=self)
+        # Uzyj followup zamiast edit_message bo defer() juz zostalo uzyte
+        await interaction.followup.send("Podanie rozpatrzone.", ephemeral=True)
+        await interaction.message.edit(embed=embed, view=self)
 
         if KANAL_LOGI_PODAN:
             log_channel = guild.get_channel(KANAL_LOGI_PODAN) if guild else None
