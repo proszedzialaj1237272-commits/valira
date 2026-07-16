@@ -9,6 +9,8 @@ import random
 import string
 import json
 
+from aiohttp import web
+
 from config import (
     BOT_TOKEN, GUILD_ID,
     KANAL_WERYFIKACJI, KANAL_DOWODY, KANAL_WYROKI,
@@ -27,6 +29,21 @@ intents.presences = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# =====================================================
+# CORS MIDDLEWARE - pozwala na zapytania z Cloudflare Pages
+# =====================================================
+async def cors_middleware(app, handler):
+    async def middleware(request):
+        if request.method == "OPTIONS":
+            response = web.Response()
+        else:
+            response = await handler(request)
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
+    return middleware
+
 def ma_role(member: discord.Member, rola_id: int) -> bool:
     rola = member.guild.get_role(rola_id)
     if not rola: return False
@@ -43,10 +60,9 @@ async def pobierz_dane_roblox(discord_id: int):
 def generuj_kod():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
 
-# ═══════════════════════════════════════════════════════
-# WEBHOOK - odbieranie podań ze strony
-# ═══════════════════════════════════════════════════════
-from aiohttp import web
+# =====================================================
+# WEBHOOK - odbieranie podan ze strony
+# =====================================================
 
 async def webhook_handler(request):
     try:
@@ -59,7 +75,9 @@ async def webhook_handler(request):
         odpowiedzi = data.get("odpowiedzi", {})
         timestamp = data.get("timestamp", datetime.now().isoformat())
 
-        # Wybierz kanał
+        print(f"[WEBHOOK] Odebrano podanie: frakcja={frakcja}, user={discord_username}, id={discord_id}")
+
+        # Wybierz kanal
         kanaly = {
             "kmp": KANAL_PODANIA_KMP,
             "spd": KANAL_PODANIA_SPD,
@@ -68,19 +86,22 @@ async def webhook_handler(request):
         }
         kanal_id = kanaly.get(frakcja)
         if not kanal_id:
-            return web.Response(status=400, text="Nieznana frakcja")
+            print(f"[WEBHOOK] Blad: Nieznana frakcja '{frakcja}'")
+            return web.json_response({"error": "Nieznana frakcja"}, status=400)
 
         guild = bot.get_guild(GUILD_ID)
         if not guild:
-            return web.Response(status=500, text="Brak serwera")
+            print(f"[WEBHOOK] Blad: Brak serwera GUILD_ID={GUILD_ID}")
+            return web.json_response({"error": "Brak serwera"}, status=500)
 
         channel = guild.get_channel(kanal_id)
         if not channel:
-            return web.Response(status=500, text="Brak kanału")
+            print(f"[WEBHOOK] Blad: Brak kanalu ID={kanal_id} dla frakcji {frakcja}")
+            return web.json_response({"error": "Brak kanalu"}, status=500)
 
         # Zbuduj embed
         embed = discord.Embed(
-            title=f"📋 Nowe podanie - {frakcja_nazwa}",
+            title=f"Nowe podanie - {frakcja_nazwa}",
             description=f"**Od:** {discord_global} (`{discord_username}`)\n**ID Discord:** `{discord_id}`\n**Data:** {timestamp[:19].replace('T', ' ')}",
             color=0x00D4AA,
             timestamp=datetime.now()
@@ -89,21 +110,24 @@ async def webhook_handler(request):
         # Dodaj odpowiedzi
         for key, value in odpowiedzi.items():
             nr = key.replace("p", "")
-            # Skróć długie odpowiedzi
             val = value[:1000] + "..." if len(value) > 1000 else value
             embed.add_field(name=f"Pytanie {nr}", value=val or "Brak", inline=False)
 
-        # Sprawdź czy użytkownik jest na serwerze
-        member = guild.get_member(int(discord_id))
-        if member:
-            embed.set_thumbnail(url=member.display_avatar.url)
+        # Sprawdz czy uzytkownik jest na serwerze
+        try:
+            member = guild.get_member(int(discord_id))
+            if member:
+                embed.set_thumbnail(url=member.display_avatar.url)
+        except Exception as e:
+            print(f"[WEBHOOK] Ostrzezenie: Nie udalo sie pobrac avatara: {e}")
 
         await channel.send(embed=embed)
+        print(f"[WEBHOOK] Podanie wyslane na kanal #{channel.name}")
 
         # Zapisz w bazie
         conn = get_db()
         cursor = conn.cursor()
-        cursor.execute('''
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS podania (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 discord_id INTEGER,
@@ -114,7 +138,7 @@ async def webhook_handler(request):
                 status TEXT DEFAULT 'oczekujace',
                 timestamp TEXT
             )
-        ''')
+        """)
         cursor.execute(
             "INSERT INTO podania (discord_id, discord_username, frakcja, frakcja_nazwa, odpowiedzi, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
             (discord_id, discord_username, frakcja, frakcja_nazwa, json.dumps(odpowiedzi), timestamp)
@@ -122,38 +146,44 @@ async def webhook_handler(request):
         conn.commit()
         conn.close()
 
-        return web.Response(status=200, text="OK")
+        return web.json_response({"success": True, "kanal": frakcja})
     except Exception as e:
-        print(f"Webhook error: {e}")
-        return web.Response(status=500, text=str(e))
+        print(f"[WEBHOOK] Blad: {e}")
+        import traceback
+        traceback.print_exc()
+        return web.json_response({"error": str(e)}, status=500)
 
 async def start_webhook():
-    app = web.Application()
+    app = web.Application(middlewares=[cors_middleware])
     app.router.add_post("/api/podanie", webhook_handler)
+    # OPTIONS handler dla preflight CORS
+    async def options_handler(request):
+        return web.Response()
+    app.router.add_options("/api/podanie", options_handler)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
     await site.start()
-    print(f"✅ Webhook nasłuchuje na porcie {os.getenv('PORT', 8080)}")
+    print(f"[WEBHOOK] Nasluchuje na porcie {os.getenv('PORT', 8080)}")
 
-# ═══════════════════════════════════════════════════════
+# =====================================================
 # START BOTA
-# ═══════════════════════════════════════════════════════
+# =====================================================
 @bot.event
 async def on_ready():
-    print(f"✅ Bot zalogowany jako: {bot.user}")
-    print(f"🌐 Serwerów: {len(bot.guilds)}")
+    print(f"[BOT] Zalogowany jako: {bot.user}")
+    print(f"[BOT] Serwerow: {len(bot.guilds)}")
     try:
         synced = await bot.tree.sync()
-        print(f"🔄 Synchronizowano {len(synced)} komend")
+        print(f"[BOT] Synchronizowano {len(synced)} komend")
     except Exception as e:
-        print(f"❌ Błąd sync: {e}")
+        print(f"[BOT] Blad sync: {e}")
     await odtworz_panel_weryfikacji()
     await start_webhook()
 
-# ═══════════════════════════════════════════════════════
+# =====================================================
 # PANEL WERYFIKACJI
-# ═══════════════════════════════════════════════════════
+# =====================================================
 async def odtworz_panel_weryfikacji():
     guild = bot.get_guild(GUILD_ID)
     if not guild: return
@@ -168,14 +198,14 @@ async def odtworz_panel_weryfikacji():
                 usuniete += 1
             except: pass
 
-    if usuniete > 0: print(f"🗑️ Usunięto {usuniete} starych paneli")
+    if usuniete > 0: print(f"[WERYFIKACJA] Usunieto {usuniete} starych paneli")
     await wyslij_panel_weryfikacji(channel)
-    print("✅ Nowy panel weryfikacji wysłany!")
+    print("[WERYFIKACJA] Nowy panel wyslany!")
 
 async def wyslij_panel_weryfikacji(channel):
     embed = discord.Embed(
-        title="🔐 Weryfikacja Roblox",
-        description="Kliknij przycisk, aby zweryfikować konto Roblox.\nPo weryfikacji otrzymasz zmianę nicku i rolę.",
+        title="Weryfikacja Roblox",
+        description="Kliknij przycisk, aby zweryfikowac konto Roblox.\nPo weryfikacji otrzymasz zmiane nicku i role.",
         color=0x00D4AA
     )
     await channel.send(embed=embed, view=WeryfikacjaView())
@@ -183,27 +213,27 @@ async def wyslij_panel_weryfikacji(channel):
 class WeryfikacjaView(discord.ui.View):
     def __init__(self): super().__init__(timeout=None)
 
-    @discord.ui.button(label="Zweryfikuj się", style=discord.ButtonStyle.green, emoji="✅")
+    @discord.ui.button(label="Zweryfikuj sie", style=discord.ButtonStyle.green, emoji="\u2705")
     async def verify(self, interaction: discord.Interaction, button: discord.ui.Button):
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM weryfikacje WHERE discord_id = ?", (interaction.user.id,))
         if cursor.fetchone():
             conn.close()
-            await interaction.response.send_message("✅ Już zweryfikowany!", ephemeral=True)
+            await interaction.response.send_message("Juz zweryfikowany!", ephemeral=True)
             return
         conn.close()
         await interaction.response.send_modal(WeryfikacjaModal())
 
 class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja - Krok 1"):
-    roblox_nick = discord.ui.TextInput(label="Nick Roblox", placeholder="Dokładny nick", required=True, max_length=50)
+    roblox_nick = discord.ui.TextInput(label="Nick Roblox", placeholder="Dokladny nick", required=True, max_length=50)
 
     async def on_submit(self, interaction: discord.Interaction):
         nick = self.roblox_nick.value
         async with aiohttp.ClientSession() as session:
             async with session.get(f"https://users.roblox.com/v1/users/search?keyword={nick}&limit=10") as resp:
                 if resp.status != 200:
-                    await interaction.response.send_message("❌ Błąd Roblox API", ephemeral=True)
+                    await interaction.response.send_message("Blad Roblox API", ephemeral=True)
                     return
                 data = await resp.json()
                 users = data.get("data", [])
@@ -213,7 +243,7 @@ class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja - Krok 1"):
                         user = u
                         break
                 if not user:
-                    await interaction.response.send_message(f"❌ Nie znaleziono `{nick}`", ephemeral=True)
+                    await interaction.response.send_message(f"Nie znaleziono `{nick}`", ephemeral=True)
                     return
                 roblox_id = user["id"]
                 roblox_username = user["name"]
@@ -227,8 +257,8 @@ class WeryfikacjaModal(discord.ui.Modal, title="Weryfikacja - Krok 1"):
         conn.close()
 
         embed = discord.Embed(
-            title="🔐 Krok 1",
-            description=f"Konto: `{roblox_username}`\n\n1. Wejdź w About na Roblox\n2. Wpisz kod w Description:\n```\n{kod}\n```\n3. Kliknij Save\n\nMasz 10 minut.",
+            title="Krok 1",
+            description=f"Konto: `{roblox_username}`\n\n1. Wejdz w About na Roblox\n2. Wpisz kod w Description:\n```\n{kod}\n```\n3. Kliknij Save\n\nMasz 10 minut.",
             color=0xFFA500
         )
         await interaction.response.send_message(embed=embed, view=SprawdzKodView(kod, roblox_id, roblox_username), ephemeral=True)
@@ -238,14 +268,14 @@ class SprawdzKodView(discord.ui.View):
         super().__init__(timeout=600)
         self.kod = kod; self.roblox_id = roblox_id; self.roblox_username = roblox_username
 
-    @discord.ui.button(label="Sprawdź kod", style=discord.ButtonStyle.blurple)
+    @discord.ui.button(label="Sprawdz kod", style=discord.ButtonStyle.blurple)
     async def sprawdz(self, interaction: discord.Interaction, button: discord.ui.Button):
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute("SELECT kod FROM kody_weryfikacyjne WHERE discord_id = ?", (interaction.user.id,))
         wynik = cursor.fetchone()
         if not wynik:
-            await interaction.response.send_message("❌ Kod wygasł", ephemeral=True)
+            await interaction.response.send_message("Kod wygasl", ephemeral=True)
             conn.close(); return
 
         async with aiohttp.ClientSession() as session:
@@ -254,7 +284,7 @@ class SprawdzKodView(discord.ui.View):
                 opis = user_data.get("description", "") or ""
 
         if self.kod not in opis:
-            await interaction.response.send_message(f"❌ Kod nie znaleziony w opisie\n```{self.kod}```", ephemeral=True)
+            await interaction.response.send_message(f"Kod nie znaleziony w opisie\n```{self.kod}```", ephemeral=True)
             conn.close(); return
 
         cursor.execute("DELETE FROM kody_weryfikacyjne WHERE discord_id = ?", (interaction.user.id,))
@@ -268,55 +298,55 @@ class SprawdzKodView(discord.ui.View):
         rola = interaction.guild.get_role(ROLA_WERYFIKOWANY)
         if rola: await interaction.user.add_roles(rola)
 
-        embed = discord.Embed(title="✅ Zweryfikowano", description=f"Nick: {self.roblox_username}", color=0x00FF00)
+        embed = discord.Embed(title="Zweryfikowano", description=f"Nick: {self.roblox_username}", color=0x00FF00)
         for child in self.children: child.disabled = True
         await interaction.response.edit_message(embed=embed, view=self)
 
-# ═══════════════════════════════════════════════════════
+# =====================================================
 # KOMENDY
-# ═══════════════════════════════════════════════════════
-@bot.tree.command(name="panel-weryfikacji", description="Wyślij panel weryfikacji")
+# =====================================================
+@bot.tree.command(name="panel-weryfikacji", description="Wyslij panel weryfikacji")
 @commands.has_permissions(administrator=True)
 async def panel_weryfikacji(interaction: discord.Interaction):
     channel = bot.get_channel(KANAL_WERYFIKACJI)
     if not channel:
-        await interaction.response.send_message("❌ Brak kanału", ephemeral=True)
+        await interaction.response.send_message("Brak kanalu", ephemeral=True)
         return
     await wyslij_panel_weryfikacji(channel)
-    await interaction.response.send_message("✅ Panel wysłany", ephemeral=True)
+    await interaction.response.send_message("Panel wyslany", ephemeral=True)
 
-@bot.tree.command(name="ogloszenie-rp", description="Wyślij ogłoszenie sesji RP")
-@app_commands.describe(czas="Czas rozpoczęcia", kod="Kod do serwera", organizator="Organizator", max_graczy="Max graczy")
+@bot.tree.command(name="ogloszenie-rp", description="Wyslij ogloszenie sesji RP")
+@app_commands.describe(czas="Czas rozpoczecia", kod="Kod do serwera", organizator="Organizator", max_graczy="Max graczy")
 async def ogloszenie_rp(interaction: discord.Interaction, czas: str, kod: str, organizator: str, max_graczy: int = 0):
     if not ma_role(interaction.user, ROLA_OGLOSZENIA_RP):
-        await interaction.response.send_message("❌ Brak uprawnień", ephemeral=True)
+        await interaction.response.send_message("Brak uprawnien", ephemeral=True)
         return
 
     channel = bot.get_channel(KANAL_OGLOSZENIA_RP)
     if not channel:
-        await interaction.response.send_message("❌ Brak kanału ogłoszeń", ephemeral=True)
+        await interaction.response.send_message("Brak kanalu ogloszen", ephemeral=True)
         return
 
     embed = discord.Embed(
-        title="📢 Zaplanowano Sesję Roleplay!!!",
-        description=f"**Czas rozpoczęcia:** {czas}\n**Organizator:** {organizator}\n**Kod do serwera:** `{kod}`\n**Gracze:** ---/{max_graczy if max_graczy > 0 else '---'}",
+        title="Zaplanowano Sesje Roleplay!!!",
+        description=f"**Czas rozpoczecia:** {czas}\n**Organizator:** {organizator}\n**Kod do serwera:** `{kod}`\n**Gracze:** ---/{max_graczy if max_graczy > 0 else '---'}",
         color=0x5865F2
     )
     embed.set_thumbnail(url="https://cdn.discordapp.com/embed/avatars/0.png")
     embed.set_footer(text=f"Made by {interaction.user.display_name} • Dzisiaj {datetime.now().strftime('%H:%M')}")
 
     await channel.send(embed=embed)
-    await interaction.response.send_message("✅ Ogłoszenie wysłane", ephemeral=True)
+    await interaction.response.send_message("Ogloszenie wyslane", ephemeral=True)
 
-@bot.tree.command(name="dowod", description="Wyrób dowód osobisty")
-@app_commands.describe(numer_postaci="Postać", imie_nazwisko="Imię i nazwisko", data_urodzenia="DD.MM.RRRR", obywatelstwo="Obywatelstwo")
-@app_commands.choices(numer_postaci=[app_commands.Choice(name="Postać 1", value=1), app_commands.Choice(name="Postać 2", value=2)])
+@bot.tree.command(name="dowod", description="Wyrob dowod osobisty")
+@app_commands.describe(numer_postaci="Postac", imie_nazwisko="Imie i nazwisko", data_urodzenia="DD.MM.RRRR", obywatelstwo="Obywatelstwo")
+@app_commands.choices(numer_postaci=[app_commands.Choice(name="Postac 1", value=1), app_commands.Choice(name="Postac 2", value=2)])
 async def dowod(interaction: discord.Interaction, numer_postaci: app_commands.Choice[int], imie_nazwisko: str, data_urodzenia: str, obywatelstwo: str):
     if not ma_role(interaction.user, ROLA_DOWOD):
-        await interaction.response.send_message("❌ Brak uprawnień", ephemeral=True); return
+        await interaction.response.send_message("Brak uprawnien", ephemeral=True); return
     dane = await pobierz_dane_roblox(interaction.user.id)
     if not dane:
-        await interaction.response.send_message("❌ Zweryfikuj się przez Roblox", ephemeral=True); return
+        await interaction.response.send_message("Zweryfikuj sie przez Roblox", ephemeral=True); return
     roblox_id, roblox_username = dane
 
     conn = get_db()
@@ -324,7 +354,7 @@ async def dowod(interaction: discord.Interaction, numer_postaci: app_commands.Ch
     cursor.execute("SELECT * FROM dowody WHERE discord_id = ? AND numer_postaci = ?", (interaction.user.id, numer_postaci.value))
     if cursor.fetchone():
         conn.close()
-        await interaction.response.send_message(f"❌ Masz już dowód Postaci {numer_postaci.value}", ephemeral=True); return
+        await interaction.response.send_message(f"Masz juz dowod Postaci {numer_postaci.value}", ephemeral=True); return
 
     avatar_url = None
     async with aiohttp.ClientSession() as session:
@@ -339,8 +369,8 @@ async def dowod(interaction: discord.Interaction, numer_postaci: app_commands.Ch
 
     channel = bot.get_channel(KANAL_DOWODY)
     if channel:
-        embed = discord.Embed(title=f"🪪 Dowód - Postać {numer_postaci.value}", color=0x3498DB)
-        embed.add_field(name="Imię i nazwisko", value=imie_nazwisko, inline=False)
+        embed = discord.Embed(title=f"Dowod - Postac {numer_postaci.value}", color=0x3498DB)
+        embed.add_field(name="Imie i nazwisko", value=imie_nazwisko, inline=False)
         embed.add_field(name="Data urodzenia", value=data_urodzenia, inline=False)
         embed.add_field(name="Obywatelstwo", value=obywatelstwo, inline=False)
         embed.add_field(name="SSN", value=str(roblox_id), inline=False)
@@ -349,16 +379,16 @@ async def dowod(interaction: discord.Interaction, numer_postaci: app_commands.Ch
         embed.set_footer(text=f"Wydano: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
         await channel.send(embed=embed)
 
-    await interaction.response.send_message(f"✅ Dowód Postaci {numer_postaci.value} wydany", ephemeral=True)
+    await interaction.response.send_message(f"Dowod Postaci {numer_postaci.value} wydany", ephemeral=True)
 
 @bot.tree.command(name="wystaw-wyrok", description="Wystaw wyrok")
-@app_commands.describe(osoba="Osoba", kara_wiezienia="Kara więzienia", kwota="Kwota", zarzuty="Zarzuty")
+@app_commands.describe(osoba="Osoba", kara_wiezienia="Kara wiezienia", kwota="Kwota", zarzuty="Zarzuty")
 async def wystaw_wyrok(interaction: discord.Interaction, osoba: discord.Member, kara_wiezienia: str, kwota: str, zarzuty: str):
     if not ma_role(interaction.user, ROLA_POLICJA):
-        await interaction.response.send_message("❌ Brak uprawnień", ephemeral=True); return
+        await interaction.response.send_message("Brak uprawnien", ephemeral=True); return
     dane = await pobierz_dane_roblox(osoba.id)
     if not dane:
-        await interaction.response.send_message("❌ Osoba niezweryfikowana", ephemeral=True); return
+        await interaction.response.send_message("Osoba niezweryfikowana", ephemeral=True); return
     roblox_id, roblox_username = dane
     data = datetime.now().strftime("%d.%m.%Y %H:%M")
 
@@ -371,7 +401,7 @@ async def wystaw_wyrok(interaction: discord.Interaction, osoba: discord.Member, 
 
     channel = bot.get_channel(KANAL_WYROKI)
     if channel:
-        embed = discord.Embed(title="⚖️ Wyrok", color=0xE74C3C)
+        embed = discord.Embed(title="Wyrok", color=0xE74C3C)
         embed.add_field(name="Osoba", value=osoba.mention, inline=False)
         embed.add_field(name="Nick Roblox", value=roblox_username, inline=False)
         embed.add_field(name="SSN", value=str(roblox_id), inline=False)
@@ -381,16 +411,16 @@ async def wystaw_wyrok(interaction: discord.Interaction, osoba: discord.Member, 
         embed.add_field(name="Data", value=data, inline=False)
         embed.add_field(name="Funkcjonariusz", value=interaction.user.mention, inline=False)
         await channel.send(embed=embed)
-    await interaction.response.send_message("✅ Wyrok wystawiony", ephemeral=True)
+    await interaction.response.send_message("Wyrok wystawiony", ephemeral=True)
 
 @bot.tree.command(name="wystaw-mandat", description="Wystaw mandat")
 @app_commands.describe(osoba="Osoba", kwota="Kwota", zarzuty="Zarzuty")
 async def wystaw_mandat(interaction: discord.Interaction, osoba: discord.Member, kwota: str, zarzuty: str):
     if not ma_role(interaction.user, ROLA_POLICJA):
-        await interaction.response.send_message("❌ Brak uprawnień", ephemeral=True); return
+        await interaction.response.send_message("Brak uprawnien", ephemeral=True); return
     dane = await pobierz_dane_roblox(osoba.id)
     if not dane:
-        await interaction.response.send_message("❌ Osoba niezweryfikowana", ephemeral=True); return
+        await interaction.response.send_message("Osoba niezweryfikowana", ephemeral=True); return
     roblox_id, roblox_username = dane
     data = datetime.now().strftime("%d.%m.%Y %H:%M")
 
@@ -403,7 +433,7 @@ async def wystaw_mandat(interaction: discord.Interaction, osoba: discord.Member,
 
     channel = bot.get_channel(KANAL_MANDATY)
     if channel:
-        embed = discord.Embed(title="📋 Mandat", color=0xF39C12)
+        embed = discord.Embed(title="Mandat", color=0xF39C12)
         embed.add_field(name="Osoba", value=osoba.mention, inline=False)
         embed.add_field(name="Nick Roblox", value=roblox_username, inline=False)
         embed.add_field(name="SSN", value=str(roblox_id), inline=False)
@@ -412,67 +442,67 @@ async def wystaw_mandat(interaction: discord.Interaction, osoba: discord.Member,
         embed.add_field(name="Data", value=data, inline=False)
         embed.add_field(name="Funkcjonariusz", value=interaction.user.mention, inline=False)
         await channel.send(embed=embed)
-    await interaction.response.send_message("✅ Mandat wystawiony", ephemeral=True)
+    await interaction.response.send_message("Mandat wystawiony", ephemeral=True)
 
-@bot.tree.command(name="wystaw-fakture", description="Wystaw fakturę")
-@app_commands.describe(komu="Komu", za_co="Za co", dzien="Dzień", kwota="Kwota")
+@bot.tree.command(name="wystaw-fakture", description="Wystaw fakture")
+@app_commands.describe(komu="Komu", za_co="Za co", dzien="Dzien", kwota="Kwota")
 async def wystaw_fakture(interaction: discord.Interaction, komu: discord.Member, za_co: str, dzien: str, kwota: str):
     if not ma_role(interaction.user, ROLA_FAKTURY):
-        await interaction.response.send_message("❌ Brak uprawnień", ephemeral=True); return
+        await interaction.response.send_message("Brak uprawnien", ephemeral=True); return
     channel = bot.get_channel(KANAL_FAKTURY)
     if channel:
-        embed = discord.Embed(title="📄 Faktura", color=0x9B59B6)
+        embed = discord.Embed(title="Faktura", color=0x9B59B6)
         embed.add_field(name="Kto", value=interaction.user.mention, inline=False)
         embed.add_field(name="Komu", value=komu.mention, inline=False)
         embed.add_field(name="Za co", value=za_co, inline=False)
-        embed.add_field(name="Dzień", value=dzien, inline=False)
+        embed.add_field(name="Dzien", value=dzien, inline=False)
         embed.add_field(name="Kwota", value=kwota, inline=False)
         await channel.send(embed=embed)
-    await interaction.response.send_message("✅ Faktura wystawiona", ephemeral=True)
+    await interaction.response.send_message("Faktura wystawiona", ephemeral=True)
 
-@bot.tree.command(name="wystaw-list-gonczy", description="Wystaw list gończy")
-@app_commands.describe(kto="Kto", na_kogo="Na kogo", powod="Powód", priorytet="Priorytet")
+@bot.tree.command(name="wystaw-list-gonczy", description="Wystaw list gonczy")
+@app_commands.describe(kto="Kto", na_kogo="Na kogo", powod="Powod", priorytet="Priorytet")
 @app_commands.choices(priorytet=[app_commands.Choice(name="Tak", value="Tak"), app_commands.Choice(name="Nie", value="Nie")])
 async def wystaw_list_gonczy(interaction: discord.Interaction, kto: str, na_kogo: str, powod: str, priorytet: app_commands.Choice[str]):
     if not ma_role(interaction.user, ROLA_LISTY_GONCZE):
-        await interaction.response.send_message("❌ Brak uprawnień", ephemeral=True); return
+        await interaction.response.send_message("Brak uprawnien", ephemeral=True); return
     channel = bot.get_channel(KANAL_LISTY_GONCZE)
     if channel:
         color = 0xFF0000 if priorytet.value == "Tak" else 0xE67E22
-        embed = discord.Embed(title="🔴 LIST GOŃCZY", color=color)
+        embed = discord.Embed(title="LIST GONCZY", color=color)
         embed.add_field(name="Kto", value=kto, inline=False)
         embed.add_field(name="Na kogo", value=na_kogo, inline=False)
-        embed.add_field(name="Powód", value=powod, inline=False)
+        embed.add_field(name="Powod", value=powod, inline=False)
         embed.add_field(name="Priorytet", value=priorytet.value, inline=False)
         await channel.send(embed=embed)
-    await interaction.response.send_message("✅ List gończy wystawiony", ephemeral=True)
+    await interaction.response.send_message("List gonczy wystawiony", ephemeral=True)
 
 @bot.tree.command(name="rejestruj-pojazd", description="Zarejestruj pojazd")
-@app_commands.describe(nr="Numer rejestracyjny", marka="Marka/Model", wlasciciel="Właściciel")
+@app_commands.describe(nr="Numer rejestracyjny", marka="Marka/Model", wlasciciel="Wlasciciel")
 async def rejestruj_pojazd(interaction: discord.Interaction, nr: str, marka: str, wlasciciel: discord.Member):
     if not ma_role(interaction.user, ROLA_REJESTRACJA):
-        await interaction.response.send_message("❌ Brak uprawnień", ephemeral=True); return
+        await interaction.response.send_message("Brak uprawnien", ephemeral=True); return
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM rejestracje WHERE nr_rejestracyjny = ?", (nr,))
     if cursor.fetchone():
         conn.close()
-        await interaction.response.send_message("❌ Numer zajęty", ephemeral=True); return
+        await interaction.response.send_message("Numer zajety", ephemeral=True); return
     cursor.execute("INSERT INTO rejestracje (nr_rejestracyjny, marka_model, wlasciciel_id, wlasciciel_nick) VALUES (?, ?, ?, ?)",
                    (nr, marka, wlasciciel.id, wlasciciel.display_name))
     conn.commit()
     conn.close()
     channel = bot.get_channel(KANAL_REJESTRACJA)
     if channel:
-        embed = discord.Embed(title="🚗 Rejestracja", color=0x2ECC71)
+        embed = discord.Embed(title="Rejestracja", color=0x2ECC71)
         embed.add_field(name="Nr", value=nr, inline=False)
         embed.add_field(name="Marka/Model", value=marka, inline=False)
-        embed.add_field(name="Właściciel", value=wlasciciel.mention, inline=False)
-        embed.add_field(name="Podpis", value="Urząd Miasta Skierniewice", inline=False)
+        embed.add_field(name="Wlasciciel", value=wlasciciel.mention, inline=False)
+        embed.add_field(name="Podpis", value="Urzad Miasta Skierniewice", inline=False)
         await channel.send(embed=embed)
-    await interaction.response.send_message("✅ Pojazd zarejestrowany", ephemeral=True)
+    await interaction.response.send_message("Pojazd zarejestrowany", ephemeral=True)
 
-@bot.tree.command(name="reset-weryfikacji", description="Zresetuj weryfikację użytkownika")
+@bot.tree.command(name="reset-weryfikacji", description="Zresetuj weryfikacje uzytkownika")
 @app_commands.describe(osoba="Osoba")
 @commands.has_permissions(administrator=True)
 async def reset_weryfikacji(interaction: discord.Interaction, osoba: discord.Member):
@@ -482,7 +512,7 @@ async def reset_weryfikacji(interaction: discord.Interaction, osoba: discord.Mem
     wynik = cursor.fetchone()
     if not wynik:
         conn.close()
-        await interaction.response.send_message(f"❌ {osoba.mention} niezweryfikowany", ephemeral=True); return
+        await interaction.response.send_message(f"{osoba.mention} niezweryfikowany", ephemeral=True); return
     roblox_username = wynik[0]
     cursor.execute("DELETE FROM weryfikacje WHERE discord_id = ?", (osoba.id,))
     cursor.execute("DELETE FROM kody_weryfikacyjne WHERE discord_id = ?", (osoba.id,))
@@ -492,11 +522,11 @@ async def reset_weryfikacji(interaction: discord.Interaction, osoba: discord.Mem
     if rola and rola in osoba.roles: await osoba.remove_roles(rola)
     try: await osoba.edit(nick=None)
     except: pass
-    await interaction.response.send_message(f"✅ Weryfikacja {osoba.mention} (`{roblox_username}`) zresetowana", ephemeral=True)
+    await interaction.response.send_message(f"Weryfikacja {osoba.mention} (`{roblox_username}`) zresetowana", ephemeral=True)
 
-# ═══════════════════════════════════════════════════════
+# =====================================================
 # START
-# ═══════════════════════════════════════════════════════
+# =====================================================
 if __name__ == "__main__":
     init_db()
     bot.run(BOT_TOKEN)
