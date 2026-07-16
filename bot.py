@@ -11,9 +11,7 @@ import json
 import traceback
 import threading
 
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-
+from flask import Flask, request, jsonify, make_response
 from config import (
     BOT_TOKEN, GUILD_ID,
     KANAL_WERYFIKACJI, KANAL_DOWODY, KANAL_WYROKI,
@@ -33,16 +31,28 @@ intents.presences = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # =====================================================
-# FLASK APP - osobny watek
+# FLASK - reczne CORS na kazdym poziomie
 # =====================================================
 flask_app = Flask(__name__)
-CORS(flask_app, resources={
-    r"/api/*": {
-        "origins": "*",
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
-    }
-})
+
+# Globalny handler OPTIONS dla wszystkich routow
+@flask_app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = make_response()
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        response.headers.add("Access-Control-Max-Age", "86400")
+        return response, 200
+
+# Dodaj CORS do kazdej odpowiedzi
+@flask_app.after_request
+def add_cors_headers(response):
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+    response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
+    return response
 
 def ma_role(member: discord.Member, rola_id: int) -> bool:
     rola = member.guild.get_role(rola_id)
@@ -61,9 +71,9 @@ def generuj_kod():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
 
 # =====================================================
-# WEBHOOK ENDPOINT
+# ENDPOINTY
 # =====================================================
-@flask_app.route("/", methods=["GET"])
+@flask_app.route("/", methods=["GET", "OPTIONS"])
 def health_check():
     return jsonify({"status": "ok", "bot_ready": bot.is_ready()})
 
@@ -92,7 +102,6 @@ def webhook_handler():
 
         print(f"[WEBHOOK] frakcja={frakcja}, user={discord_username}, id={discord_id}")
 
-        # Wybierz kanal
         kanaly = {
             "kmp": KANAL_PODANIA_KMP,
             "spd": KANAL_PODANIA_SPD,
@@ -118,7 +127,6 @@ def webhook_handler():
             print(f"[WEBHOOK] BLAD: Brak kanalu ID={kanal_id}")
             return jsonify({"error": "Brak kanalu"}), 500
 
-        # Zbuduj embed
         embed = discord.Embed(
             title=f"Nowe podanie - {frakcja_nazwa}",
             description=f"**Od:** {discord_global} (`{discord_username}`)\n**ID Discord:** `{discord_id}`\n**Data:** {timestamp[:19].replace('T', ' ')}",
@@ -126,13 +134,11 @@ def webhook_handler():
             timestamp=datetime.now()
         )
 
-        # Dodaj odpowiedzi
         for key, value in odpowiedzi.items():
             nr = key.replace("p", "")
             val = value[:1000] + "..." if len(value) > 1000 else value
             embed.add_field(name=f"Pytanie {nr}", value=val or "Brak", inline=False)
 
-        # Sprawdz czy uzytkownik jest na serwerze
         try:
             member = guild.get_member(int(discord_id))
             if member:
@@ -140,12 +146,10 @@ def webhook_handler():
         except Exception as e:
             print(f"[WEBHOOK] Ostrzezenie avatar: {e}")
 
-        # Uzycie asyncio.run_coroutine_threadsafe bo jestesmy w watku Flask
         future = asyncio.run_coroutine_threadsafe(channel.send(embed=embed), bot.loop)
         future.result(timeout=10)
         print(f"[WEBHOOK] SUKCES: Wyslano na kanal #{channel.name}")
 
-        # Zapisz w bazie
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute("""
@@ -193,7 +197,6 @@ async def on_ready():
         print(f"[BOT] Blad sync: {e}")
     await odtworz_panel_weryfikacji()
 
-    # Uruchom Flask w osobnym watku
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     print("[BOT] Flask uruchomiony w osobnym watku")
