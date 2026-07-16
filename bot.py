@@ -20,11 +20,22 @@ from config import (
     KANAL_OGLOSZENIA_RP,
     ROLA_WERYFIKOWANY, ROLA_POLICJA, ROLA_FAKTURY,
     ROLA_LISTY_GONCZE, ROLA_REJESTRACJA, ROLA_DOWOD, ROLA_OGLOSZENIA_RP,
-    KANAL_PODANIA_KMP, KANAL_PODANIA_SPD, KANAL_PODANIA_JRG, KANAL_PODANIA_RSPR
+    KANAL_PODANIA_KMP, KANAL_PODANIA_SPD, KANAL_PODANIA_JRG, KANAL_PODANIA_RSPR,
+    ROLA_KMP, ROLA_SPD, ROLA_JRG, ROLA_RSPR, ROLA_GDDKIA,
+    KANAL_LOGI_PODAN
 )
 from database import init_db, get_db
 
-# Mapa frakcja -> rola (łatwo rozszerzalna!)
+intents = discord.Intents.default()
+intents.members = True
+intents.message_content = True
+intents.presences = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+# =====================================================
+# MAPA FRAKCJA -> ROLA (latwo rozszerzalna)
+# =====================================================
 FRAKCJE_ROLE = {
     "kmp": ROLA_KMP,
     "spd": ROLA_SPD,
@@ -33,12 +44,13 @@ FRAKCJE_ROLE = {
     "gddkia": ROLA_GDDKIA,
 }
 
-intents = discord.Intents.default()
-intents.members = True
-intents.message_content = True
-intents.presences = True
-
-bot = commands.Bot(command_prefix="!", intents=intents)
+FRAKCJE_NAZWY = {
+    "kmp": "Komenda Miejska Policji",
+    "spd": "Sluzby Pomocy Drogowej",
+    "jrg": "Jednostka Ratowniczo-Gasnicza",
+    "rspr": "Rejonowa Stacja Pogotowia Ratunkowego",
+    "gddkia": "GDDKiA",
+}
 
 # =====================================================
 # FLASK + CORS
@@ -96,7 +108,8 @@ def webhook_handler():
             "kmp": KANAL_PODANIA_KMP,
             "spd": KANAL_PODANIA_SPD,
             "jrg": KANAL_PODANIA_JRG,
-            "rspr": KANAL_PODANIA_RSPR
+            "rspr": KANAL_PODANIA_RSPR,
+            "gddkia": KANAL_PODANIA_GDDKIA if 'KANAL_PODANIA_GDDKIA' in globals() else None,
         }
         kanal_id = kanaly.get(frakcja)
         print(f"[WEBHOOK] Kanal ID dla {frakcja}: {kanal_id}")
@@ -137,15 +150,25 @@ def webhook_handler():
             print(f"[WEBHOOK] Ostrzezenie avatar: {e}")
 
         future = asyncio.run_coroutine_threadsafe(channel.send(embed=embed), bot.loop)
-        future.result(timeout=10)
-        print(f"[WEBHOOK] SUKCES: Wyslano na kanal #{channel.name}")
+        sent_msg = future.result(timeout=10)
+        message_id = str(sent_msg.id)
+        print(f"[WEBHOOK] SUKCES: Wyslano na kanal #{channel.name}, msg_id={message_id}")
 
+        # Zapis do bazy
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO podania (discord_id, discord_username, frakcja, frakcja_nazwa, odpowiedzi, timestamp) VALUES (?, ?, ?, ?, ?, ?)",
-            (discord_id, discord_username, frakcja, frakcja_nazwa, json.dumps(odpowiedzi), timestamp)
+            "INSERT INTO podania (discord_id, discord_username, frakcja, frakcja_nazwa, odpowiedzi, timestamp, message_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (discord_id, discord_username, frakcja, frakcja_nazwa, json.dumps(odpowiedzi), timestamp, message_id)
         )
+        podanie_id = cursor.lastrowid
+        
+        # Zapisz tez do podania_status
+        cursor.execute(
+            "INSERT INTO podania_status (podanie_id, discord_id, frakcja, message_id) VALUES (?, ?, ?, ?)",
+            (podanie_id, discord_id, frakcja, message_id)
+        )
+        
         conn.commit()
         conn.close()
 
@@ -328,6 +351,147 @@ class SprawdzKodView(discord.ui.View):
         for child in self.children:
             child.disabled = True
         await interaction.response.edit_message(embed=embed, view=self)
+
+# =====================================================
+# ZARZADZANIE PODANIAMI (AKCEPTACJA/ODRZUCENIE)
+# =====================================================
+@bot.tree.command(name="panel-podan", description="Wyslij panel do zarzadzania podaniami")
+@commands.has_permissions(administrator=True)
+async def panel_podan(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="Panel Zarzadzania Podaniami",
+        description="Kliknij przycisk, aby zobaczyc oczekujace podania.",
+        color=0x00D4AA
+    )
+    await interaction.response.send_message(embed=embed, view=PanelPodanView(), ephemeral=True)
+
+class PanelPodanView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="Pokaz oczekujace", style=discord.ButtonStyle.primary, emoji="📋")
+    async def pokaz(self, interaction: discord.Interaction, button: discord.ui.Button):
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT ps.id, ps.discord_id, ps.frakcja, p.discord_username, p.odpowiedzi, p.timestamp, ps.message_id
+            FROM podania_status ps
+            JOIN podania p ON ps.podanie_id = p.id
+            WHERE ps.status = 'oczekujace'
+            ORDER BY ps.id DESC
+            LIMIT 10
+        """)
+        podania = cursor.fetchall()
+        conn.close()
+
+        if not podania:
+            await interaction.response.send_message("Brak oczekujacych podan.", ephemeral=True)
+            return
+
+        ps_id, dc_id, frak, username, odpowiedzi, timestamp, msg_id = podania[0]
+        frakcja_nazwa = FRAKCJE_NAZWY.get(frak, frak.upper())
+        
+        embed = discord.Embed(
+            title=f"Podanie #{ps_id} - {frakcja_nazwa}",
+            description=f"**Od:** {username}\n**ID:** `{dc_id}`\n**Data:** {timestamp[:19].replace('T', ' ')}",
+            color=0xFFA500
+        )
+        
+        await interaction.response.send_message(
+            embed=embed,
+            view=AkceptujOdrzucView(ps_id, dc_id, frak),
+            ephemeral=True
+        )
+
+class AkceptujOdrzucView(discord.ui.View):
+    def __init__(self, podanie_status_id, discord_id, frakcja):
+        super().__init__(timeout=None)
+        self.podanie_status_id = podanie_status_id
+        self.discord_id = int(discord_id)
+        self.frakcja = frakcja
+
+    @discord.ui.button(label="Akceptuj", style=discord.ButtonStyle.green, emoji="✅")
+    async def akceptuj(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._przetworz(interaction, "zaakceptowane", "zdal", True)
+
+    @discord.ui.button(label="Odrzuc", style=discord.ButtonStyle.red, emoji="❌")
+    async def odrzuc(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._przetworz(interaction, "odrzucone", "nie zdal", False)
+
+    async def _przetworz(self, interaction, status, wynik, nadaj_role):
+        # Aktualizuj baze
+        conn = get_db()
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE podania_status SET status = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?",
+            (status, str(interaction.user.id), datetime.now().isoformat(), self.podanie_status_id)
+        )
+        conn.commit()
+        conn.close()
+
+        # Wyslij DM do uzytkownika
+        guild = bot.get_guild(GUILD_ID)
+        member = guild.get_member(self.discord_id) if guild else None
+        
+        dm_wiadomosc = (
+            f"**Wynik podania do {FRAKCJE_NAZWY.get(self.frakcja, self.frakcja.upper())}**\n\n"
+            f"Twoje podanie zostalo **{wynik}**.\n"
+            f"Recenzent: {interaction.user.mention}\n"
+            f"Data: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+        )
+
+        dm_status = "Nie wyslano"
+        try:
+            if member:
+                await member.send(dm_wiadomosc)
+                dm_status = "Wyslano DM"
+            else:
+                dm_status = "Nie znaleziono uzytkownika na serwerze"
+        except Exception as e:
+            dm_status = f"Blad DM: {e}"
+
+        # Nadaj role jesli akceptacja
+        rola_nadana = "Nie"
+        if nadaj_role and member and guild:
+            rola_id = FRAKCJE_ROLE.get(self.frakcja)
+            if rola_id:
+                rola = guild.get_role(rola_id)
+                if rola:
+                    try:
+                        await member.add_roles(rola)
+                        rola_nadana = f"Tak ({rola.name})"
+                    except Exception as e:
+                        rola_nadana = f"Blad nadawania: {e}"
+                else:
+                    rola_nadana = "Rola nie istnieje na serwerze"
+            else:
+                rola_nadana = "Brak roli w config (dodaj ROLA_XXX do .env)"
+
+        # Odpowiedz recenzentowi
+        await interaction.response.send_message(
+            f"Podanie #{self.podanie_status_id} **{status}**.\n"
+            f"DM: {dm_status}\n"
+            f"Rola: {rola_nadana}",
+            ephemeral=True
+        )
+
+        # Log do kanalu (opcjonalnie)
+        if KANAL_LOGI_PODAN:
+            log_channel = guild.get_channel(KANAL_LOGI_PODAN) if guild else None
+            if log_channel:
+                log_embed = discord.Embed(
+                    title=f"Podanie {status}",
+                    description=(
+                        f"**Podanie:** #{self.podanie_status_id}\n"
+                        f"**Frakcja:** {FRAKCJE_NAZWY.get(self.frakcja, self.frakcja.upper())}\n"
+                        f"**Uzytkownik:** <@{self.discord_id}>\n"
+                        f"**Recenzent:** {interaction.user.mention}\n"
+                        f"**DM:** {dm_status}\n"
+                        f"**Rola:** {rola_nadana}"
+                    ),
+                    color=0x00FF00 if nadaj_role else 0xFF0000
+                )
+                await log_channel.send(embed=log_embed)
 
 # =====================================================
 # KOMENDY
