@@ -87,11 +87,11 @@ class PodanieReviewView(discord.ui.View):
 
     @discord.ui.button(label="Akceptuj", style=discord.ButtonStyle.green, emoji="✅")
     async def akceptuj(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._przetworz(interaction, "zaakceptowane", "zdal", True)
+        await self._przetworz(interaction, "zaakceptowane", "Zaakceptowanie", True)
 
     @discord.ui.button(label="Odrzuc", style=discord.ButtonStyle.red, emoji="❌")
     async def odrzuc(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._przetworz(interaction, "odrzucone", "nie zdal", False)
+        await self._przetworz(interaction, "odrzucone", "odrzucone", False)
 
     async def _przetworz(self, interaction, status, wynik, nadaj_role):
         # ODPOWIEDZ OD RAZU zeby nie bylo timeout
