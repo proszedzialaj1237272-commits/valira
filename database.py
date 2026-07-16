@@ -1,20 +1,19 @@
 import sqlite3
 import os
 
-# Ścieżka do bazy — import z config
 from config import DB_PATH
 
 def init_db():
     """Tworzy wszystkie tabele w bazie danych"""
-    
+
     # Upewnij się że folder istnieje (dla Railway Volume /data)
     folder = os.path.dirname(DB_PATH)
     if folder:
         os.makedirs(folder, exist_ok=True)
-    
+
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    
+
     # ═══ TABELA 1: WERYFIKACJE ROBLOX ═══
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS weryfikacje (
@@ -24,8 +23,19 @@ def init_db():
             verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
-    # ═══ TABELA 2: DOWODY OSOBISTE (max 2 na gracza) ═══
+
+    # ═══ TABELA 2: KODY WERYFIKACYJNE (tymczasowe) ═══
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS kody_weryfikacyjne (
+            discord_id INTEGER PRIMARY KEY,
+            kod TEXT,
+            roblox_id INTEGER,
+            roblox_username TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # ═══ TABELA 3: DOWODY OSOBISTE (max 2 na gracza) ═══
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS dowody (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,8 +51,8 @@ def init_db():
             UNIQUE(discord_id, numer_postaci)
         )
     ''')
-    
-    # ═══ TABELA 3: WYROKI ═══
+
+    # ═══ TABELA 4: WYROKI ═══
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS wyroki (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,8 +66,8 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
-    # ═══ TABELA 4: MANDATY ═══
+
+    # ═══ TABELA 5: MANDATY ═══
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS mandaty (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -70,8 +80,8 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
-    # ═══ TABELA 5: FAKTURY ═══
+
+    # ═══ TABELA 6: FAKTURY ═══
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS faktury (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,8 +95,8 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
-    # ═══ TABELA 6: LISTY GOŃCZE ═══
+
+    # ═══ TABELA 7: LISTY GOŃCZE ═══
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS listy_goncze (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,8 +107,8 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
-    # ═══ TABELA 7: REJESTRACJE POJAZDÓW ═══
+
+    # ═══ TABELA 8: REJESTRACJE POJAZDÓW ═══
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS rejestracje (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,29 +119,7 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
-    
-    # ═══ TABELA 8: PANELE (do odtwarzania po restarcie) ═══
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS panele (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            typ TEXT,
-            channel_id INTEGER,
-            message_id INTEGER,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
 
-        # ═══ TABELA: KODY WERYFIKACYJNE (tymczasowe) ═══
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS kody_weryfikacyjne (
-            discord_id INTEGER PRIMARY KEY,
-            kod TEXT,
-            roblox_id INTEGER,
-            roblox_username TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
     conn.commit()
     conn.close()
     print("✅ Baza danych gotowa!")
