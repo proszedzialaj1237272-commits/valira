@@ -37,6 +37,13 @@ ROLA_REJESTRACJA  = int(os.getenv("ROLA_REJESTRACJA",  "TU_ID_ROLI"))
 ROLA_DOWOD        = int(os.getenv("ROLA_DOWOD",        "TU_ID_ROLI"))
 
 # ═══════════════════════════════════════
+# OGŁOSZENIA ROLEPLAY
+# ═══════════════════════════════════════
+KANAL_OGLOSZENIA_RP = int(os.getenv("KANAL_OGLOSZENIA_RP", "TU_ID_KANAŁU"))
+ROLA_OGLOSZENIA_RP = int(os.getenv("ROLA_OGLOSZENIA_RP", "TU_ID_ROLI"))
+
+
+# ═══════════════════════════════════════
 # ŚCIEŻKA DO BAZY DANYCH
 # Na Railway: /data/bot_data.db (Volume)
 # Lokalnie:   bot_data.db
