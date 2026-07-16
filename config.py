@@ -6,7 +6,7 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 GUILD_ID = int(os.getenv("GUILD_ID", "0"))
 
-# Kanały
+# Kanaly
 KANAL_WERYFIKACJI = int(os.getenv("KANAL_WERYFIKACJI", "0"))
 KANAL_DOWODY = int(os.getenv("KANAL_DOWODY", "0"))
 KANAL_WYROKI = int(os.getenv("KANAL_WYROKI", "0"))
@@ -16,7 +16,7 @@ KANAL_LISTY_GONCZE = int(os.getenv("KANAL_LISTY_GONCZE", "0"))
 KANAL_REJESTRACJA = int(os.getenv("KANAL_REJESTRACJA", "0"))
 KANAL_OGLOSZENIA_RP = int(os.getenv("KANAL_OGLOSZENIA_RP", "0"))
 
-# Kanały podań (każda frakcja osobno)
+# Kanaly podan (kazda frakcja osobno)
 KANAL_PODANIA_KMP = int(os.getenv("KANAL_PODANIA_KMP", "0"))
 KANAL_PODANIA_SPD = int(os.getenv("KANAL_PODANIA_SPD", "0"))
 KANAL_PODANIA_JRG = int(os.getenv("KANAL_PODANIA_JRG", "0"))
