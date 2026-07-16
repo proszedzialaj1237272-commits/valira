@@ -120,18 +120,19 @@ def init_db():
         )
     ''')
 
-    # TABELA 9: PODANIA
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS podania (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            discord_id INTEGER,
-            discord_username TEXT,
-            frakcja TEXT,
-            frakcja_nazwa TEXT,
-            odpowiedzi TEXT,
-            status TEXT DEFAULT 'oczekujace',
-            timestamp TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+# TABELA 9: PODANIA (ZMIENIONA - dodaj message_id)
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS podania (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        discord_id INTEGER,
+        discord_username TEXT,
+        frakcja TEXT,
+        frakcja_nazwa TEXT,
+        odpowiedzi TEXT,
+        status TEXT DEFAULT 'oczekujace',
+        timestamp TEXT,
+        message_id TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
