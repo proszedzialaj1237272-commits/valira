@@ -27,7 +27,6 @@ ROLA_KMP = int(os.getenv("ROLA_KMP", "0"))
 ROLA_SPD = int(os.getenv("ROLA_SPD", "0"))
 ROLA_JRG = int(os.getenv("ROLA_JRG", "0"))
 ROLA_RSPR = int(os.getenv("ROLA_RSPR", "0"))
-ROLA_GDDKIA = int(os.getenv("ROLA_GDDKIA", "0"))  # dla nowej strony GDDKiA
 
 # Kanal do logow akceptacji/odrzucen (opcjonalnie)
 KANAL_LOGI_PODAN = int(os.getenv("KANAL_LOGI_PODAN", "0"))
