@@ -120,34 +120,34 @@ def init_db():
         )
     ''')
 
-# TABELA 9: PODANIA (ZMIENIONA - dodaj message_id)
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS podania (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        discord_id INTEGER,
-        discord_username TEXT,
-        frakcja TEXT,
-        frakcja_nazwa TEXT,
-        odpowiedzi TEXT,
-        status TEXT DEFAULT 'oczekujace',
-        timestamp TEXT,
-        message_id TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    # TABELA 9: PODANIA (z message_id)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS podania (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id INTEGER,
+            discord_username TEXT,
+            frakcja TEXT,
+            frakcja_nazwa TEXT,
+            odpowiedzi TEXT,
+            status TEXT DEFAULT 'oczekujace',
+            timestamp TEXT,
+            message_id TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
     # TABELA 10: STATUS PODAN (do akceptacji/odrzucenia)
-cursor.execute('''
-    CREATE TABLE IF NOT EXISTS podania_status (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        podanie_id INTEGER,
-        discord_id INTEGER,
-        frakcja TEXT,
-        status TEXT DEFAULT 'oczekujace',
-        message_id TEXT,
-        reviewed_by TEXT,
-        reviewed_at TIMESTAMP,
-        FOREIGN KEY (podanie_id) REFERENCES podania(id)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS podania_status (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            podanie_id INTEGER,
+            discord_id INTEGER,
+            frakcja TEXT,
+            status TEXT DEFAULT 'oczekujace',
+            message_id TEXT,
+            reviewed_by TEXT,
+            reviewed_at TIMESTAMP,
+            FOREIGN KEY (podanie_id) REFERENCES podania(id)
         )
     ''')
 
