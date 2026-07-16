@@ -135,6 +135,21 @@ def init_db():
         )
     ''')
 
+    # TABELA 10: STATUS PODAN (do akceptacji/odrzucenia)
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS podania_status (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        podanie_id INTEGER,
+        discord_id INTEGER,
+        frakcja TEXT,
+        status TEXT DEFAULT 'oczekujace',
+        message_id TEXT,
+        reviewed_by TEXT,
+        reviewed_at TIMESTAMP,
+        FOREIGN KEY (podanie_id) REFERENCES podania(id)
+        )
+    ''')
+
     conn.commit()
     conn.close()
     print("Baza danych gotowa!")
