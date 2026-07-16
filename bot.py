@@ -24,6 +24,15 @@ from config import (
 )
 from database import init_db, get_db
 
+# Mapa frakcja -> rola (łatwo rozszerzalna!)
+FRAKCJE_ROLE = {
+    "kmp": ROLA_KMP,
+    "spd": ROLA_SPD,
+    "jrg": ROLA_JRG,
+    "rspr": ROLA_RSPR,
+    "gddkia": ROLA_GDDKIA,
+}
+
 intents = discord.Intents.default()
 intents.members = True
 intents.message_content = True
