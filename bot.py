@@ -12,6 +12,7 @@ import traceback
 import threading
 
 from flask import Flask, request, jsonify, make_response
+from flask_cors import CORS
 from config import (
     BOT_TOKEN, GUILD_ID,
     KANAL_WERYFIKACJI, KANAL_DOWODY, KANAL_WYROKI,
@@ -31,26 +32,10 @@ intents.presences = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # =====================================================
-# FLASK - CORS
+# FLASK + CORS
 # =====================================================
 flask_app = Flask(__name__)
-
-@flask_app.before_request
-def handle_preflight():
-    if request.method == "OPTIONS":
-        response = make_response()
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
-        response.headers.add("Access-Control-Max-Age", "86400")
-        return response, 200
-
-@flask_app.after_request
-def add_cors_headers(response):
-    response.headers.add("Access-Control-Allow-Origin", "*")
-    response.headers.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-    response.headers.add("Access-Control-Allow-Headers", "Content-Type, Authorization")
-    return response
+CORS(flask_app, resources={r"/api/*": {"origins": "*"}})
 
 def ma_role(member: discord.Member, rola_id: int) -> bool:
     rola = member.guild.get_role(rola_id)
@@ -72,17 +57,14 @@ def generuj_kod():
 # =====================================================
 # ENDPOINTY
 # =====================================================
-@flask_app.route("/", methods=["GET", "OPTIONS"])
+@flask_app.route("/", methods=["GET"])
 def health_check():
     return jsonify({"status": "ok", "bot_ready": bot.is_ready()})
 
-@flask_app.route("/api/podanie", methods=["GET", "POST", "OPTIONS"])
+@flask_app.route("/api/podanie", methods=["GET", "POST"])
 def webhook_handler():
     print(f"[WEBHOOK] === Zapytanie {request.method} ===")
     print(f"[WEBHOOK] Headers: {dict(request.headers)}")
-
-    if request.method == "OPTIONS":
-        return "", 200
 
     if request.method == "GET":
         return jsonify({"status": "ok", "message": "Webhook dziala. Uzyj POST."})
@@ -149,7 +131,6 @@ def webhook_handler():
         future.result(timeout=10)
         print(f"[WEBHOOK] SUKCES: Wyslano na kanal #{channel.name}")
 
-        # Zapis do bazy
         conn = get_db()
         cursor = conn.cursor()
         cursor.execute(
