@@ -3,49 +3,32 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ═══════════════════════════════════════
-# TOKEN BOTA (z Discord Developer Portal)
-# ═══════════════════════════════════════
-BOT_TOKEN = os.getenv("BOT_TOKEN", "TU_WKLEJ_SWÓJ_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+GUILD_ID = int(os.getenv("GUILD_ID", "0"))
 
-# ═══════════════════════════════════════
-# ID TWOJEGO SERWERA DISCORD
-# Jak znaleźć: Prawy przycisk na serwer → Kopiuj ID
-# (musisz mieć włączony Tryb Dewelopera w Discord)
-# ═══════════════════════════════════════
-GUILD_ID = int(os.getenv("GUILD_ID", "TU_WKLEJ_ID_SERWERA"))
+# Kanały
+KANAL_WERYFIKACJI = int(os.getenv("KANAL_WERYFIKACJI", "0"))
+KANAL_DOWODY = int(os.getenv("KANAL_DOWODY", "0"))
+KANAL_WYROKI = int(os.getenv("KANAL_WYROKI", "0"))
+KANAL_MANDATY = int(os.getenv("KANAL_MANDATY", "0"))
+KANAL_FAKTURY = int(os.getenv("KANAL_FAKTURY", "0"))
+KANAL_LISTY_GONCZE = int(os.getenv("KANAL_LISTY_GONCZE", "0"))
+KANAL_REJESTRACJA = int(os.getenv("KANAL_REJESTRACJA", "0"))
+KANAL_OGLOSZENIA_RP = int(os.getenv("KANAL_OGLOSZENIA_RP", "0"))
 
-# ═══════════════════════════════════════
-# ID KANAŁÓW (Prawy przycisk na kanał → Kopiuj ID)
-# ═══════════════════════════════════════
-KANAL_WERYFIKACJI = int(os.getenv("KANAL_WERYFIKACJI", "TU_ID_KANAŁU"))
-KANAL_DOWODY      = int(os.getenv("KANAL_DOWODY",      "TU_ID_KANAŁU"))
-KANAL_WYROKI      = int(os.getenv("KANAL_WYROKI",      "TU_ID_KANAŁU"))
-KANAL_MANDATY     = int(os.getenv("KANAL_MANDATY",     "TU_ID_KANAŁU"))
-KANAL_FAKTURY     = int(os.getenv("KANAL_FAKTURY",     "TU_ID_KANAŁU"))
-KANAL_LISTY_GONCZE = int(os.getenv("KANAL_LISTY_GONCZE", "TU_ID_KANAŁU"))
-KANAL_REJESTRACJA = int(os.getenv("KANAL_REJESTRACJA", "TU_ID_KANAŁU"))
+# Kanały podań (każda frakcja osobno)
+KANAL_PODANIA_KMP = int(os.getenv("KANAL_PODANIA_KMP", "0"))
+KANAL_PODANIA_SPD = int(os.getenv("KANAL_PODANIA_SPD", "0"))
+KANAL_PODANIA_JRG = int(os.getenv("KANAL_PODANIA_JRG", "0"))
+KANAL_PODANIA_RSPR = int(os.getenv("KANAL_PODANIA_RSPR", "0"))
 
-# ═══════════════════════════════════════
-# ID RÓL (Prawy przycisk na rolę → Kopiuj ID)
-# ═══════════════════════════════════════
-ROLA_WERYFIKOWANY = int(os.getenv("ROLA_WERYFIKOWANY", "TU_ID_ROLI"))
-ROLA_POLICJA      = int(os.getenv("ROLA_POLICJA",      "TU_ID_ROLI"))
-ROLA_FAKTURY      = int(os.getenv("ROLA_FAKTURY",      "TU_ID_ROLI"))
-ROLA_LISTY_GONCZE = int(os.getenv("ROLA_LISTY_GONCZE", "TU_ID_ROLI"))
-ROLA_REJESTRACJA  = int(os.getenv("ROLA_REJESTRACJA",  "TU_ID_ROLI"))
-ROLA_DOWOD        = int(os.getenv("ROLA_DOWOD",        "TU_ID_ROLI"))
+# Role
+ROLA_WERYFIKOWANY = int(os.getenv("ROLA_WERYFIKOWANY", "0"))
+ROLA_POLICJA = int(os.getenv("ROLA_POLICJA", "0"))
+ROLA_FAKTURY = int(os.getenv("ROLA_FAKTURY", "0"))
+ROLA_LISTY_GONCZE = int(os.getenv("ROLA_LISTY_GONCZE", "0"))
+ROLA_REJESTRACJA = int(os.getenv("ROLA_REJESTRACJA", "0"))
+ROLA_DOWOD = int(os.getenv("ROLA_DOWOD", "0"))
+ROLA_OGLOSZENIA_RP = int(os.getenv("ROLA_OGLOSZENIA_RP", "0"))
 
-# ═══════════════════════════════════════
-# OGŁOSZENIA ROLEPLAY
-# ═══════════════════════════════════════
-KANAL_OGLOSZENIA_RP = int(os.getenv("KANAL_OGLOSZENIA_RP", "TU_ID_KANAŁU"))
-ROLA_OGLOSZENIA_RP = int(os.getenv("ROLA_OGLOSZENIA_RP", "TU_ID_ROLI"))
-
-
-# ═══════════════════════════════════════
-# ŚCIEŻKA DO BAZY DANYCH
-# Na Railway: /data/bot_data.db (Volume)
-# Lokalnie:   bot_data.db
-# ═══════════════════════════════════════
-DB_PATH = os.getenv("DB_PATH", "bot_data.db")
+DB_PATH = os.getenv("DB_PATH", "/data/bot_data.db")
