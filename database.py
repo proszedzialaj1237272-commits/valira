@@ -6,7 +6,7 @@ from config import DB_PATH
 def init_db():
     """Tworzy wszystkie tabele w bazie danych"""
 
-    # Upewnij się że folder istnieje (dla Railway Volume /data)
+    # Upewnij sie ze folder istnieje (dla Railway Volume /data)
     folder = os.path.dirname(DB_PATH)
     if folder:
         os.makedirs(folder, exist_ok=True)
@@ -14,7 +14,7 @@ def init_db():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # ═══ TABELA 1: WERYFIKACJE ROBLOX ═══
+    # TABELA 1: WERYFIKACJE ROBLOX
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS weryfikacje (
             discord_id INTEGER PRIMARY KEY,
@@ -24,7 +24,7 @@ def init_db():
         )
     ''')
 
-    # ═══ TABELA 2: KODY WERYFIKACYJNE (tymczasowe) ═══
+    # TABELA 2: KODY WERYFIKACYJNE (tymczasowe)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS kody_weryfikacyjne (
             discord_id INTEGER PRIMARY KEY,
@@ -35,7 +35,7 @@ def init_db():
         )
     ''')
 
-    # ═══ TABELA 3: DOWODY OSOBISTE (max 2 na gracza) ═══
+    # TABELA 3: DOWODY OSOBISTE (max 2 na gracza)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS dowody (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -52,7 +52,7 @@ def init_db():
         )
     ''')
 
-    # ═══ TABELA 4: WYROKI ═══
+    # TABELA 4: WYROKI
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS wyroki (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,7 +67,7 @@ def init_db():
         )
     ''')
 
-    # ═══ TABELA 5: MANDATY ═══
+    # TABELA 5: MANDATY
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS mandaty (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -81,7 +81,7 @@ def init_db():
         )
     ''')
 
-    # ═══ TABELA 6: FAKTURY ═══
+    # TABELA 6: FAKTURY
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS faktury (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -96,7 +96,7 @@ def init_db():
         )
     ''')
 
-    # ═══ TABELA 7: LISTY GOŃCZE ═══
+    # TABELA 7: LISTY GONCZE
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS listy_goncze (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -108,7 +108,7 @@ def init_db():
         )
     ''')
 
-    # ═══ TABELA 8: REJESTRACJE POJAZDÓW ═══
+    # TABELA 8: REJESTRACJE POJAZDOW
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS rejestracje (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,10 +120,25 @@ def init_db():
         )
     ''')
 
+    # TABELA 9: PODANIA
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS podania (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            discord_id INTEGER,
+            discord_username TEXT,
+            frakcja TEXT,
+            frakcja_nazwa TEXT,
+            odpowiedzi TEXT,
+            status TEXT DEFAULT 'oczekujace',
+            timestamp TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
     conn.commit()
     conn.close()
-    print("✅ Baza danych gotowa!")
+    print("Baza danych gotowa!")
 
 def get_db():
-    """Zwraca połączenie do bazy"""
+    """Zwraca polaczenie do bazy"""
     return sqlite3.connect(DB_PATH)
