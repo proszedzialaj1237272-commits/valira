@@ -8,8 +8,11 @@ import os
 import random
 import string
 import json
+import traceback
+import threading
 
-from aiohttp import web
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
 from config import (
     BOT_TOKEN, GUILD_ID,
@@ -30,19 +33,16 @@ intents.presences = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # =====================================================
-# CORS MIDDLEWARE - pozwala na zapytania z Cloudflare Pages
+# FLASK APP - osobny watek
 # =====================================================
-async def cors_middleware(app, handler):
-    async def middleware(request):
-        if request.method == "OPTIONS":
-            response = web.Response()
-        else:
-            response = await handler(request)
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        return response
-    return middleware
+flask_app = Flask(__name__)
+CORS(flask_app, resources={
+    r"/api/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
 
 def ma_role(member: discord.Member, rola_id: int) -> bool:
     rola = member.guild.get_role(rola_id)
@@ -61,12 +61,27 @@ def generuj_kod():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
 
 # =====================================================
-# WEBHOOK - odbieranie podan ze strony
+# WEBHOOK ENDPOINT
 # =====================================================
+@flask_app.route("/", methods=["GET"])
+def health_check():
+    return jsonify({"status": "ok", "bot_ready": bot.is_ready()})
 
-async def webhook_handler(request):
+@flask_app.route("/api/podanie", methods=["GET", "POST", "OPTIONS"])
+def webhook_handler():
+    print(f"[WEBHOOK] === Zapytanie {request.method} ===")
+    print(f"[WEBHOOK] Headers: {dict(request.headers)}")
+
+    if request.method == "OPTIONS":
+        return "", 200
+
+    if request.method == "GET":
+        return jsonify({"status": "ok", "message": "Webhook dziala. Uzyj POST."})
+
     try:
-        data = await request.json()
+        data = request.get_json()
+        print(f"[WEBHOOK] Body: {json.dumps(data, indent=2)[:500]}")
+
         frakcja = data.get("frakcja")
         frakcja_nazwa = data.get("frakcjaNazwa")
         discord_id = data.get("discordId")
@@ -75,7 +90,7 @@ async def webhook_handler(request):
         odpowiedzi = data.get("odpowiedzi", {})
         timestamp = data.get("timestamp", datetime.now().isoformat())
 
-        print(f"[WEBHOOK] Odebrano podanie: frakcja={frakcja}, user={discord_username}, id={discord_id}")
+        print(f"[WEBHOOK] frakcja={frakcja}, user={discord_username}, id={discord_id}")
 
         # Wybierz kanal
         kanaly = {
@@ -85,19 +100,23 @@ async def webhook_handler(request):
             "rspr": KANAL_PODANIA_RSPR
         }
         kanal_id = kanaly.get(frakcja)
+        print(f"[WEBHOOK] Kanal ID dla {frakcja}: {kanal_id}")
+
         if not kanal_id:
-            print(f"[WEBHOOK] Blad: Nieznana frakcja '{frakcja}'")
-            return web.json_response({"error": "Nieznana frakcja"}, status=400)
+            print(f"[WEBHOOK] BLAD: Nieznana frakcja '{frakcja}'")
+            return jsonify({"error": "Nieznana frakcja"}), 400
 
         guild = bot.get_guild(GUILD_ID)
+        print(f"[WEBHOOK] Guild: {guild}")
         if not guild:
-            print(f"[WEBHOOK] Blad: Brak serwera GUILD_ID={GUILD_ID}")
-            return web.json_response({"error": "Brak serwera"}, status=500)
+            print(f"[WEBHOOK] BLAD: Brak serwera GUILD_ID={GUILD_ID}")
+            return jsonify({"error": "Brak serwera"}), 500
 
         channel = guild.get_channel(kanal_id)
+        print(f"[WEBHOOK] Kanal: {channel}")
         if not channel:
-            print(f"[WEBHOOK] Blad: Brak kanalu ID={kanal_id} dla frakcji {frakcja}")
-            return web.json_response({"error": "Brak kanalu"}, status=500)
+            print(f"[WEBHOOK] BLAD: Brak kanalu ID={kanal_id}")
+            return jsonify({"error": "Brak kanalu"}), 500
 
         # Zbuduj embed
         embed = discord.Embed(
@@ -119,10 +138,12 @@ async def webhook_handler(request):
             if member:
                 embed.set_thumbnail(url=member.display_avatar.url)
         except Exception as e:
-            print(f"[WEBHOOK] Ostrzezenie: Nie udalo sie pobrac avatara: {e}")
+            print(f"[WEBHOOK] Ostrzezenie avatar: {e}")
 
-        await channel.send(embed=embed)
-        print(f"[WEBHOOK] Podanie wyslane na kanal #{channel.name}")
+        # Uzycie asyncio.run_coroutine_threadsafe bo jestesmy w watku Flask
+        future = asyncio.run_coroutine_threadsafe(channel.send(embed=embed), bot.loop)
+        future.result(timeout=10)
+        print(f"[WEBHOOK] SUKCES: Wyslano na kanal #{channel.name}")
 
         # Zapisz w bazie
         conn = get_db()
@@ -146,25 +167,17 @@ async def webhook_handler(request):
         conn.commit()
         conn.close()
 
-        return web.json_response({"success": True, "kanal": frakcja})
-    except Exception as e:
-        print(f"[WEBHOOK] Blad: {e}")
-        import traceback
-        traceback.print_exc()
-        return web.json_response({"error": str(e)}, status=500)
+        return jsonify({"success": True, "kanal": frakcja}), 200
 
-async def start_webhook():
-    app = web.Application(middlewares=[cors_middleware])
-    app.router.add_post("/api/podanie", webhook_handler)
-    # OPTIONS handler dla preflight CORS
-    async def options_handler(request):
-        return web.Response()
-    app.router.add_options("/api/podanie", options_handler)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
-    await site.start()
-    print(f"[WEBHOOK] Nasluchuje na porcie {os.getenv('PORT', 8080)}")
+    except Exception as e:
+        print(f"[WEBHOOK] BLAD: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+def run_flask():
+    port = int(os.getenv("PORT", 8080))
+    print(f"[FLASK] Startuje serwer na porcie {port}")
+    flask_app.run(host="0.0.0.0", port=port, threaded=True)
 
 # =====================================================
 # START BOTA
@@ -179,7 +192,11 @@ async def on_ready():
     except Exception as e:
         print(f"[BOT] Blad sync: {e}")
     await odtworz_panel_weryfikacji()
-    await start_webhook()
+
+    # Uruchom Flask w osobnym watku
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+    print("[BOT] Flask uruchomiony w osobnym watku")
 
 # =====================================================
 # PANEL WERYFIKACJI
